@@ -1,48 +1,56 @@
-# Hyprscroll2D design
+# Layout design
 
-## Mental model
+## Grid and camera
 
-Each tiled window occupies an integer grid coordinate `(column, row)`. The
-workspace camera also has a grid coordinate. Rendering translates every window
-relative to that camera.
+Each workspace has an integer grid of cells. A cell contains one to four tiled
+windows. Columns and rows are sized from their contents; width and height
+presets, gaps, and edge peeks determine placement. The camera pans in both axes
+and zoom scales the workspace. Keyboard zoom uses presets; wheel zoom is continuous.
 
-The largest window size is slightly smaller than the viewport. Columns and
-rows are packed using the largest window in each band rather than a fixed
-screen-sized pitch. This keeps neighboring edges visible even when individual
-windows use smaller presets. With a 48px peek and a 12px inter-cell gap, at
-least 36px of an adjacent maximum-sized row or column remains visible.
+New windows extend the grid to the right. Directional focus prefers aligned
+neighbors. Focus can pan the camera to expose a target; manual panning also
+allows exploring the canvas. Hover focus and click focus are configurable.
 
-## Initial behavior
+## Groups and movement
 
-- New windows are placed in the first free cell to the right of the focused
-  window.
-- Directional focus prefers a window on the same row or column, then the
-  nearest directional candidate.
-- Moving into an occupied cell swaps the two windows.
-- Moving into an empty cell preserves the hole and moves the window there.
-- The camera follows focus unless the user explicitly pans it.
-- Width and height use discrete presets to prevent accidental overlaps.
+An occupied destination forms or extends a group. Two members use halves;
+three use one half and two quarters; four use quarters. These are visible layout
+tiles, separate from native Hyprland tab groups. Moves within a group reorder
+members; moving outward detaches a member. A full destination swaps complete
+cells. Mouse gestures and overview use the same grouping model.
 
-## Intended controls
+Optional delayed compaction keeps cells connected after changes. It waits for
+idle time rather than rearranging the grid during a held drag.
 
-| Action | Binding |
-| --- | --- |
-| Focus | `Super+Arrow` |
-| Move window | `Super+Shift+Arrow` |
-| Pan camera | `Super+Ctrl+Arrow` |
-| Grow width | `Super+-` |
-| Shrink width | `Super+=` |
-| Grow height | `Super+Shift+=` |
-| Shrink height | `Super+Shift+-` |
+## Overview and minimap
 
-Bindings must delegate to Omarchy's original actions whenever another layout
-is active.
+The Lua adapter emits snapshots consumed by the QML overlays. Overview supports
+keyboard navigation, drag operations, and transitions between workspaces,
+including empty workspaces. Closing it releases the keyboard grab before
+committing the selected window's focus. The minimap tracks canvas geometry and
+camera position. Visual preferences live outside the watched plugin directory.
 
-## Roadmap
+## Monitor workspaces
 
-1. Validate off-screen placement and animation on Hyprland 0.56.2.
-2. Add safe Omarchy bindings and an experimental workspace rule.
-3. Add state persistence across Hyprland reloads.
-4. Add an overview showing the full 2D canvas.
-5. Add mouse/touchpad camera panning.
-6. Harden groups, fullscreen, multi-monitor moves and special workspaces.
+Each monitor connector has a saved position in an ordered list and owns five
+workspace IDs: 1–5, 6–10, and so on. The bar displays local numbers 1–5. Saved
+connector order survives reloads and reconnects. Workspace assignments are
+persistent, but window groups and camera state remain in memory and reset on
+Hyprland configuration reload.
+
+## Code map
+
+- `layout/core.lua`: geometry, navigation, groups, camera, and compaction.
+- `layout/gestures.lua`: pointer gesture calculations.
+- `layout/init.lua`: Hyprland adapter, focus, events, and overview state.
+- `layout/preferences.lua`: layout preference access.
+- `integration/plugin.lua`: shell bootstrap and reload guard.
+- `integration/omarchy.lua`: settings shortcut and layout bindings.
+- `integration/workspaces.lua`: monitor banks and local workspace navigation.
+- `Service.qml`: service startup and settings IPC.
+- `Preview.qml`, `MinimapMotion.qml`: overview and minimap.
+- `Customizer.qml`, `Settings.js`, `SettingsPreview.qml`: settings UI and defaults.
+- `Workspaces.qml`: per-monitor workspace bar widget.
+- `validate-shortcuts.py`: key-name and conflict validation.
+
+See the README for current controls and CONTRIBUTING.md for verification.

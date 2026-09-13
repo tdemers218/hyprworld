@@ -2,10 +2,10 @@
 
 set -eu
 
-start_marker="-- hyprscroll2d:start"
-end_marker="-- hyprscroll2d:end"
+start_marker="-- hyprworld:start"
+end_marker="-- hyprworld:end"
 workspace="${1:-9}"
-config_file="${HYPRSCROLL2D_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
+config_file="${HYPRWORLD_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 case "$workspace" in
@@ -32,13 +32,13 @@ if ! grep -q 'default.hypr.omarchy' "$config_file"; then
 fi
 
 if grep -Fq -- "$start_marker" "$config_file"; then
-  printf 'Hyprscroll2D is already configured in %s\n' "$config_file"
+  printf 'Hyprworld is already configured in %s\n' "$config_file"
   exit 0
 fi
 
-if grep -q 'hyprscroll2d/layout/init.lua' "$config_file"; then
-  printf 'Error: an unmarked Hyprscroll2D setup already exists in %s\n' "$config_file" >&2
-  printf 'Remove the old Hyprscroll2D lines before running this installer.\n' >&2
+if grep -q 'hyprworld/layout/init.lua' "$config_file"; then
+  printf 'Error: an unmarked Hyprworld setup already exists in %s\n' "$config_file" >&2
+  printf 'Remove the old Hyprworld lines before running this installer.\n' >&2
   exit 1
 fi
 
@@ -52,7 +52,7 @@ esac
 escaped_repo=${repo_dir//\\/\\\\}
 escaped_repo=${escaped_repo//\"/\\\"}
 timestamp="$(date +%Y%m%d%H%M%S)"
-backup_file="${config_file}.hyprscroll2d.bak.${timestamp}"
+backup_file="${config_file}.hyprworld.bak.${timestamp}"
 before_errors=""
 
 if command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
@@ -64,10 +64,10 @@ cp -p -- "$config_file" "$backup_file"
 {
   printf '\n%s\n' "$start_marker"
   printf 'do\n'
-  printf '  local hyprscroll2d = "%s"\n' "$escaped_repo"
-  printf '  dofile(hyprscroll2d .. "/layout/init.lua")\n'
-  printf '  dofile(hyprscroll2d .. "/integration/omarchy.lua")\n'
-  printf '  hl.workspace_rule({ workspace = "%s", layout = "lua:hyprscroll2d" })\n' "$workspace"
+  printf '  local hyprworld = "%s"\n' "$escaped_repo"
+  printf '  dofile(hyprworld .. "/layout/init.lua")\n'
+  printf '  dofile(hyprworld .. "/integration/omarchy.lua")\n'
+  printf '  hl.workspace_rule({ workspace = "%s", layout = "lua:hyprworld" })\n' "$workspace"
   printf 'end\n'
   printf '%s\n' "$end_marker"
 } >> "$config_file"
@@ -78,7 +78,7 @@ if command -v luac >/dev/null 2>&1 && ! luac -p "$config_file"; then
   exit 1
 fi
 
-if [ "${HYPRSCROLL2D_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+if [ "${HYPRWORLD_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
   if ! hyprctl reload >/dev/null; then
     printf 'Warning: Hyprland could not reload. The config was installed; reload it later.\n' >&2
   else
@@ -93,6 +93,6 @@ if [ "${HYPRSCROLL2D_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 
   fi
 fi
 
-printf 'Installed Hyprscroll2D on workspace %s.\n' "$workspace"
+printf 'Installed Hyprworld with five workspaces per monitor and extra workspace %s.\n' "$workspace"
 printf 'Config backup: %s\n' "$backup_file"
 printf 'Press Super+%s, open a few windows, and use Super+Arrow to explore.\n' "$workspace"

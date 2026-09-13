@@ -1,16 +1,24 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.kirollosatef.hyprscroll2d",
-  "name": "Hyprscroll2D",
-  "version": "0.2.0",
-  "author": "Kirollos Atef",
+  "id": "io.github.tdemers218.hyprworld",
+  "name": "Hyprworld",
+  "version": "0.1.0",
+  "author": "Tristan Demers and Hyprworld contributors",
   "license": "MIT",
-  "description": "An infinite two-dimensional scrolling workspace layout for Hyprland.",
+  "description": "An enhanced two-dimensional Hyprland layout with window groups, a minimap, overview, and themed visual settings.",
   "kinds": [
-    "service"
+    "service",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "displayName": "Hyprworld workspaces",
+    "description": "Five local workspaces on each monitor",
+    "category": "Compositor",
+    "allowMultiple": false
   }
 }

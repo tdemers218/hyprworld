@@ -1,6 +1,8 @@
-# Research notes
+# Historical upstream research notes
 
-Research was performed against Hyprland 0.56.2 on 2026-08-24.
+These notes are preserved from Hyprscroll2D, which records research against
+Hyprland 0.56.2 on 2026-08-24. They describe the original design investigation,
+not a current survey or compatibility guarantee. Project status may have changed.
 
 ## Existing projects
 

@@ -5,6 +5,16 @@ import Quickshell.Io
 Item {
     id: root
 
+    Preview {}
+    Customizer { id: customizer }
+
+    IpcHandler {
+        target: "hyprworld"
+        function toggleCustomizer(): void { customizer.toggle() }
+        function openCustomizer(): void { customizer.opened = true }
+        function closeCustomizer(): void { customizer.opened = false }
+    }
+
     property bool loadPending: false
     readonly property string bootstrapPath: decodeURIComponent(
         Qt.resolvedUrl("integration/plugin.lua").toString().replace(/^file:\/\//, "")
@@ -57,7 +67,7 @@ Item {
             waitForEnd: true
             onStreamFinished: {
                 const message = text.trim()
-                if (message) console.warn("Hyprscroll2D:", message)
+                if (message) console.warn("Hyprworld:", message)
             }
         }
     }

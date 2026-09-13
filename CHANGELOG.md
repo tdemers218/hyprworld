@@ -1,12 +1,26 @@
 # Changelog
 
-## v0.2.0 - 2026-08-24
+## Hyprworld 0.1.0 — unreleased
+
+First independent release, derived from Hyprscroll2D.
+
+- Rename the plugin, layout, IPC, settings paths, and UI to Hyprworld.
+- Add visible groups of up to four windows, drag grouping, and cell swapping.
+- Add interactive overview, minimap, continuous wheel zoom, and camera panning.
+- Add themed settings, shortcut validation, and configurable mouse focus.
+- Add five workspaces per monitor, a local workspace widget, and overview transitions.
+- Add delayed compaction and focus/gesture regression coverage.
+- Rewrite installation, migration, controls, and contributor documentation.
+
+The releases below belong to the original project, not Hyprworld.
+
+## Upstream Hyprscroll2D v0.2.0 - 2026-08-24
 
 - Add native installation through `omarchy plugin add`.
 - Reload the layout automatically after a Hyprland configuration reload.
 - Add an Omarchy marketplace-compatible service manifest.
 
-## v0.1.0 - 2026-08-24
+## Upstream Hyprscroll2D v0.1.0 - 2026-08-24
 
 First experimental preview.
 

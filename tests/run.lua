@@ -47,11 +47,12 @@ test("moving down creates a second row", function()
     equal(state.camera.row, 1)
 end)
 
-test("moving into an occupied cell swaps windows", function()
+test("moving into an occupied cell groups windows", function()
     local state = fresh({ "A", "B" }, "B")
     assert(core.move(state, "left"))
     equal(core.position_of(state, "B").col, 0)
-    equal(core.position_of(state, "A").col, 1)
+    equal(core.position_of(state, "A").col, 0)
+    equal(#core.members(state, "A"), 2)
 end)
 
 test("focus prefers a window aligned on the requested axis", function()
@@ -75,8 +76,8 @@ test("width and height presets are independent", function()
     core.resize_width(state, config, 1)
     core.resize_height(state, config, -1)
     local width_step, height_step = core.size_steps_of(state, "A")
-    equal(width_step, 3)
-    equal(height_step, 2)
+    equal(width_step, math.min(config.default_width_step + 1, #config.width_steps))
+    equal(height_step, math.max(config.default_height_step - 1, 1))
 end)
 
 test("resize clamps at preset boundaries", function()
@@ -132,6 +133,73 @@ test("manual camera pan survives ordinary synchronization", function()
     equal(state.camera.row, 1)
 end)
 
+test("zoom scales every tile and restores its original geometry", function()
+    local state = fresh({ "A", "B" }, "A")
+    core.move(state, "down")
+    state.focused_id = "A"
+    core.follow(state)
+    local area = { x = 0, y = 0, w = 1000, h = 800 }
+    local before = core.placements(state, area, config)
+    assert(core.zoom(state, config, 1))
+    local zoomed = core.placements(state, area, config)
+    assert(zoomed.A.w > before.A.w and zoomed.A.h > before.A.h, "zoom in must grow every tile")
+    assert(zoomed.B.w > before.B.w and zoomed.B.h > before.B.h, "zoom must apply to neighboring tiles")
+    assert(core.zoom(state, config, -1))
+    local restored = core.placements(state, area, config)
+    equal(restored.A.w, before.A.w)
+    equal(restored.A.h, before.A.h)
+    equal(restored.B.y, before.B.y)
+end)
+
+test("maximum zoom preserves outer margins on a wide monitor", function()
+    local state = fresh({ "A" }, "A")
+    state.zoom_step = #config.zoom_steps
+    local area = { x = 0, y = 0, w = 2560, h = 1440 }
+    local placement = core.placements(state, area, config).A
+    assert(placement.x >= config.max_zoom_margin)
+    assert(placement.y >= config.max_zoom_margin)
+    assert(placement.x + placement.w <= area.w - config.max_zoom_margin)
+    assert(placement.y + placement.h <= area.h - config.max_zoom_margin)
+end)
+
+test("directional growth anchors the opposite edge", function()
+    local state = fresh({ "A", "B" }, "A")
+    state.focused_id = "B"
+    core.move(state, "down")
+    core.move(state, "left")
+    state.width_step_by_id.A = #config.width_steps
+    state.focused_id = "B"
+    core.resize_width(state, config, -1)
+    assert(core.resize_direction(state, config, "right"))
+    local placements = core.placements(state, { x = 0, y = 0, w = 1000, h = 800 }, config)
+    assert(state.align_x_by_id.B == -1, "right growth must anchor the left edge")
+    assert(placements.B.x < 100, "left-aligned tile should use the left side of its cell")
+end)
+
+test("directional resize clamps without rejecting repeated commands", function()
+    local state = fresh({ "A" }, "A")
+    for _ = 1, 10 do assert(core.resize_direction(state, config, "right")) end
+    local width = core.size_steps_of(state, "A")
+    equal(width, #config.width_steps)
+    for _ = 1, 10 do assert(core.resize_direction(state, config, "left")) end
+    width = core.size_steps_of(state, "A")
+    equal(width, 1)
+end)
+
+test("maximum tile toggles back to the default size", function()
+    local state = fresh({ "A" }, "A")
+    core.resize_direction(state, config, "right")
+    assert(core.toggle_maximize(state, config))
+    local max_width, max_height = core.size_steps_of(state, "A")
+    equal(max_width, #config.width_steps)
+    equal(max_height, #config.height_steps)
+    assert(core.toggle_maximize(state, config))
+    local restored_width, restored_height = core.size_steps_of(state, "A")
+    equal(restored_width, config.default_width_step)
+    equal(restored_height, config.default_height_step)
+    equal(state.align_x_by_id.A, 0)
+end)
+
 test("closed windows are removed without disturbing survivors", function()
     local state = fresh({ "A", "B", "C" }, "B")
     local original = core.position_of(state, "C").col
@@ -140,4 +208,4 @@ test("closed windows are removed without disturbing survivors", function()
     equal(core.position_of(state, "C").col, original)
 end)
 
-print(string.format("hyprscroll2d: %d tests passed", passed))
+print(string.format("hyprworld: %d tests passed", passed))

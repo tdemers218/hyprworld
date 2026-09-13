@@ -2,9 +2,9 @@
 
 set -eu
 
-start_marker="-- hyprscroll2d:start"
-end_marker="-- hyprscroll2d:end"
-config_file="${HYPRSCROLL2D_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
+start_marker="-- hyprworld:start"
+end_marker="-- hyprworld:end"
+config_file="${HYPRWORLD_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
 
 if [ ! -f "$config_file" ]; then
   printf 'Error: Hyprland config not found at %s\n' "$config_file" >&2
@@ -12,12 +12,12 @@ if [ ! -f "$config_file" ]; then
 fi
 
 if ! grep -Fq -- "$start_marker" "$config_file"; then
-  printf 'Hyprscroll2D is not installed in %s\n' "$config_file"
+  printf 'Hyprworld is not installed in %s\n' "$config_file"
   exit 0
 fi
 
 timestamp="$(date +%Y%m%d%H%M%S)"
-backup_file="${config_file}.hyprscroll2d.bak.${timestamp}"
+backup_file="${config_file}.hyprworld.bak.${timestamp}"
 temp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
 trap 'rm -f -- "$temp_file"' EXIT
 
@@ -37,7 +37,7 @@ chmod --reference="$config_file" "$temp_file"
 mv -- "$temp_file" "$config_file"
 trap - EXIT
 
-if [ "${HYPRSCROLL2D_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+if [ "${HYPRWORLD_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
   hyprctl reload >/dev/null || printf 'Warning: reload Hyprland manually.\n' >&2
   errors="$(hyprctl configerrors 2>/dev/null || true)"
   if [ -n "$errors" ]; then
@@ -45,6 +45,6 @@ if [ "${HYPRSCROLL2D_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 
   fi
 fi
 
-printf 'Removed Hyprscroll2D from %s\n' "$config_file"
+printf 'Removed Hyprworld from %s\n' "$config_file"
 printf 'Config backup: %s\n' "$backup_file"
 printf 'You may now delete the cloned repository.\n'

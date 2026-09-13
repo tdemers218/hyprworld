@@ -1,205 +1,184 @@
-# Hyprscroll2D
+# Hyprworld
 
-[![Tests](https://github.com/kirollosatef/hyprscroll2d/actions/workflows/tests.yml/badge.svg)](https://github.com/kirollosatef/hyprscroll2d/actions/workflows/tests.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+A two-dimensional scrolling layout for **Hyprland with Omarchy Shell**.
+Arrange windows across a grid, group them into visible tiles, and navigate with
+an interactive overview, minimap, and smooth camera zoom.
 
-Hyprscroll2D is an experimental two-dimensional scrolling layout for Hyprland.
-It turns a workspace into an expandable grid and lets you move through it in
-every direction.
+Hyprworld is an independent fork of
+[Hyprscroll2D by Kirollos Atef](https://github.com/kirollosatef/hyprscroll2d).
+The original layout and integration form its foundation; this fork adds a
+substantially expanded grouping, navigation, and settings workflow. See
+[CREDITS.md](CREDITS.md) and the preserved [MIT license](LICENSE).
 
-Unlike column-only scrolling layouts, windows can live above, below, left and
-right of each other. Configurable edge peeks keep nearby rows and columns
-visible, so you never lose the shape of your workspace.
+Install this project through Omarchy, not `hyprpm`.
 
-## What works
+**Status:** 0.1.0, unreleased and experimental. The inherited development baseline
+is Hyprland 0.56.2 with the Lua custom-layout API. Compatibility with other
+versions is unverified. This repository contains Lua and QML, with no compiled
+Hyprland plugin to build.
 
-- Infinite two-dimensional window placement
-- Focus and camera movement on both axes
-- Directional window movement with collision swapping
-- Independent width and height presets
-- Visible edge peeks for neighboring rows and columns
-- Per-workspace in-memory layout state
-- Omarchy bindings that fall back to the normal action outside Hyprscroll2D
+## Features
 
-## Status
+- Scrolling and camera movement in both dimensions.
+- Groups of two, three, or four visible windows, with drag grouping and swaps.
+- Interactive overview with keyboard navigation, dragging, and workspace transitions.
+- Minimap with adjustable placement, dimensions, opacity, and outlines.
+- Continuous mouse-wheel zoom and keyboard zoom presets.
+- Five local workspaces per monitor, with stable saved monitor assignments.
+- Themed settings, 19 configurable shortcuts, hover or click focus, and delayed compaction.
 
-`v0.2.0` is an experimental preview for Hyprland `0.56.x`. It has been
-live-tested on Hyprland `0.56.2` and is intentionally enabled on only one
-workspace during evaluation.
+## Install
 
-The layout uses Hyprland's Lua custom-layout API, so it does not require a
-compiled Hyprland plugin. Native Omarchy Shell packaging loads the layout and
-keeps it active across Hyprland config reloads. Other Lua-configured Hyprland
-installations can load the layout, but must provide their own bindings.
+You need an Omarchy installation with its Lua Hyprland configuration, Omarchy
+Shell/Quickshell, `omarchy plugin`, and Python 3 for shortcut validation.
+The QML interface depends on Omarchy's shell components; it is not a standalone
+Quickshell configuration.
 
-## Install on Omarchy
+Once published at [tdemers218/hyprworld](https://github.com/tdemers218/hyprworld), install with:
 
-### Recommended: Omarchy plugin command
-
-Requirements:
-
-- Current Omarchy Quattro with Hyprland `0.56.x`
-
-Install and enable directly from GitHub:
-
-```bash
-omarchy plugin add https://github.com/kirollosatef/hyprscroll2d --enable
+```sh
+omarchy plugin add https://github.com/tdemers218/hyprworld.git --enable
 ```
 
-The plugin loads Hyprscroll2D at runtime without editing your Hyprland config.
-It enables the layout only on workspace 9. Press `Super+9`, open a few windows,
-and try the controls below.
+The plugin ID is `io.github.tdemers218.hyprworld`. Do not use the Hyprscroll2D upstream URL: it
+installs the original plugin. If migrating, follow [the migration guide](docs/MIGRATING.md)
+first; run only one of the two layouts' Omarchy integrations at a time.
 
-Update it later with:
+Enabling the plugin assigns **five workspaces to every connected monitor** and
+replaces the workspace and layout shortcuts listed below. It is not limited to
+workspace 9. Monitor order is saved in `~/.config/omarchy/hyprworld-monitors`:
+the first monitor owns IDs 1–5, the next 6–10, and so on. The widget displays
+local numbers 1–5 on each screen. Disconnected monitors retain their saved bank;
+Hyprland may temporarily relocate their workspaces.
 
-```bash
-omarchy plugin update io.github.kirollosatef.hyprscroll2d
-```
+Choose the Hyprworld workspaces widget when prompted for bar placement. It can
+replace the normal workspace widget through Omarchy's bar configuration.
 
-The repository contains a validated Omarchy `manifest.json` and can be
-installed through the official `omarchy plugin` command today. A listing on
-the community [Omarchy Plugin Marketplace](https://omarchyplugins.com/) is a
-separate review process and does not make a plugin part of Omarchy's bundled
-first-party plugins.
+### First use
 
-### Alternative: config installer
-
-If your Omarchy version does not yet provide `omarchy plugin`, clone the
-project and run the config installer:
-
-Clone the project and run the installer:
-
-```bash
-git clone https://github.com/kirollosatef/hyprscroll2d.git \
-  ~/.local/share/hyprscroll2d
-~/.local/share/hyprscroll2d/install.sh
-```
-
-This alternative installer:
-
-- creates a timestamped backup of `~/.config/hypr/hyprland.lua`;
-- enables Hyprscroll2D only on workspace 9;
-- reloads Hyprland and checks for configuration errors;
-- restores the backup automatically if the new block causes an error.
-
-To use a different experimental workspace, pass its number:
-
-```bash
-~/.local/share/hyprscroll2d/install.sh 8
-```
-
-For a manual installation, add the following near the end of
-`~/.config/hypr/hyprland.lua`, after the Omarchy defaults and your normal
-`require("hypr.*")` lines:
-
-```lua
-local hyprscroll2d = os.getenv("HOME") .. "/.local/share/hyprscroll2d"
-dofile(hyprscroll2d .. "/layout/init.lua")
-dofile(hyprscroll2d .. "/integration/omarchy.lua")
-
--- Start safely on one experimental workspace.
-hl.workspace_rule({ workspace = "9", layout = "lua:hyprscroll2d" })
-```
-
-Then reload and validate the configuration:
-
-```bash
-hyprctl reload
-hyprctl configerrors
-```
-
-If `hyprctl configerrors` prints nothing, the manual setup is ready.
+1. Press **Super+1** on the focused monitor and open a few windows.
+2. Use **Super+Arrow** to focus and **Super+Shift+Arrow** to move or group them.
+3. Press **Super+O** to explore the overview; select a card to return to it.
+4. Press **Super+Shift+L** to open settings.
 
 ## Controls
 
-| Action | Binding |
+| Action | Default binding |
 | --- | --- |
-| Focus a window | `Super+Arrow` |
-| Move or swap a window | `Super+Shift+Arrow` |
-| Pan the camera | `Super+Ctrl+Arrow` |
-| Grow window width | `Super+-` |
-| Shrink window width | `Super+=` |
-| Grow window height | `Super+Shift+=` |
-| Shrink window height | `Super+Shift+-` |
+| Focus a window | Super+Arrow |
+| Move, group, detach, or swap | Super+Shift+Arrow |
+| Shrink width / height | Super+Alt+Left / Up |
+| Grow width / height | Super+Alt+Right / Down |
+| Toggle default / maximum tile size | Super+Alt+F |
+| Zoom in / out | Super+Ctrl+Up / Down |
+| Smooth zoom | Super+mouse wheel |
+| Pan camera | Super+middle mouse drag |
+| Move or group with pointer | Super+left mouse drag |
+| Toggle overview | Super+O |
+| Open settings | Super+Shift+L |
+| Select local workspace 1–5 | Super+1–5 |
+| Move window to local workspace and follow | Super+Shift+1–5 |
+| Move window without following | Super+Shift+Alt+1–5 |
+| Previous / next local workspace | Super+Ctrl+Left / Right |
+| Previous workspace on this monitor | Super+Ctrl+Tab |
+| Next / previous monitor | Super+Tab / Super+Shift+Tab |
 
-These keys retain Omarchy's normal behavior whenever the active window is not
-using Hyprscroll2D.
+Workspace number bindings use physical number-row keycodes. Workspace stepping
+stops at the ends of each monitor's bank. Number-row shortcuts for 6–0 and the
+stock whole-workspace monitor movement shortcuts are unbound while enabled.
+Some other Omarchy shortcuts are replaced too; inspect the Shortcuts tab and
+`integration/omarchy.lua` before adapting an existing custom keymap. Outside the
+layout, only actions with an explicit fallback retain their normal behavior.
 
-## Customize the layout
+### Groups and overview
 
-Edit [`layout/config.lua`](layout/config.lua) to change:
+Dropping a window onto another creates or extends a group. Two windows share
+halves, three use one half and two quarters, and four use quarters. A full
+four-window destination swaps complete cells. These groups are visible tiles,
+not native Hyprland tab groups. Moving a member outward detaches it; moving
+within a group swaps member positions. Dragging across monitors cancels the gesture.
 
-- `peek_x` and `peek_y`: visible pixels from neighboring columns and rows
-- `gap_x` and `gap_y`: spacing between cells
-- `width_steps` and `height_steps`: available size presets
-- `default_width_step` and `default_height_step`: initial window dimensions
+In overview, arrows select, Shift+arrows move/group, Alt+arrows resize, and
+left-drag moves cards. Super+middle-drag pans. The configured workspace shortcuts
+also work, including on empty workspaces. Click a card, press Enter/Escape, or
+zoom in to return to the selected window. Click empty space or toggle overview
+to close it.
 
-Reload Hyprland after changing the values.
+## Settings
 
-## Update a config installation
+Open settings with **Super+Shift+L**. **Apply** or **Ctrl+S** saves the draft;
+**Revert** discards it. Closing the panel preserves unsaved edits until the shell
+restarts. Sections can restore defaults.
 
-```bash
-git -C ~/.local/share/hyprscroll2d pull --ff-only
+- **Minimap:** enable, corner, insets, maximum dimensions, opacity, and outline weight.
+- **Overview:** animation duration, wallpaper, and card opacity.
+- **Mouse/workflow:** hover or click focus, hover cooldown, connected layout, and compaction delay.
+- **Shortcuts:** edit the 19 layout/settings actions; validation checks key names,
+  keycodes, duplicate actions, and active binding conflicts.
+- **Plugin:** disable/re-enable and refresh the shell. The settings controller
+  remains accessible when the layout is disabled through this panel.
+
+Settings are stored in `~/.config/omarchy/hyprworld.json`. Appearance and mouse
+changes apply without a compositor reload; shortcut changes reload Hyprland.
+Disabling/re-enabling also changes the workspace layout and refreshes the shell.
+**Hyprland reloads reset in-memory window groups and camera/layout state.**
+
+Advanced geometry defaults live in [layout/config.lua](layout/config.lua): edge
+peeks, gaps, width/height presets, initial dimensions, and zoom presets. Reload
+Hyprland after editing. Keep a copy of custom changes before updating the plugin.
+
+An optional custom launcher can receive Up/Down navigation by setting
+`HYPRWORLD_LAUNCHER_IPC` in Hyprland's environment to its shell IPC target. It must
+implement `moveSelected` and return `handled` when it consumes navigation.
+No personal launcher is required by default.
+
+## Update, disable, or uninstall
+
+```sh
+omarchy plugin update io.github.tdemers218.hyprworld
+```
+
+For a temporary pause, disable it in its settings panel; use the same shortcut
+to re-enable. To remove the plugin:
+
+```sh
+omarchy plugin remove io.github.tdemers218.hyprworld --yes
 hyprctl reload
 hyprctl configerrors
 ```
 
-## Uninstall
+Preferences and saved monitor order remain in `~/.config/omarchy/` so they can be
+reused. Removing the shell plugin makes its settings shortcut unavailable.
 
-If installed using `omarchy plugin add`, run:
+## Troubleshooting
 
-```bash
-omarchy plugin remove io.github.kirollosatef.hyprscroll2d --yes
-hyprctl reload
-```
+- **Nothing appears:** confirm the plugin is enabled and inspect
+  `hyprctl configerrors`. Verify your Hyprland supports the Lua layout API.
+- **Wrong workspaces or duplicated bindings:** disable the previous Hyprscroll2D
+  integration and check for a manually installed config block; see migration.
+- **Settings will not apply:** resolve highlighted shortcut conflicts first.
+- **Groups disappear after reload:** group state is currently in memory only.
+- **Layout loads but no settings/overview:** use the full Omarchy shell plugin;
+  the config installer loads only the Lua integration.
 
-The reload restores Omarchy's normal bindings and removes the runtime layout.
+Fullscreen, native Hyprland groups, cross-monitor moves, special workspaces, and
+mixed monitor setups need further live testing. Automated checks use compositor
+mocks; they do not establish compatibility with your compositor release.
 
-If installed using the alternative config installer, run its uninstaller
-before deleting the repository:
+Report fork-specific problems in **this repository's Issues tab** with versions,
+monitor geometry, reproduction steps, and relevant configuration errors.
 
-```bash
-~/.local/share/hyprscroll2d/uninstall.sh
-```
+## Other installation and development
 
-It removes only the marked Hyprscroll2D block and creates another timestamped
-config backup. Once it finishes, remove the cloned repository:
+[Advanced installation](docs/INSTALLATION.md) covers the config-only installer
+and the Lua entry point. [Migration](docs/MIGRATING.md) explains renamed settings
+and identifiers. [Contributing](CONTRIBUTING.md) covers testing and bug reports;
+[design notes](docs/DESIGN.md) explain the implementation.
 
-```bash
-rm -rf ~/.local/share/hyprscroll2d
-```
+Run the automated suite with Lua 5.4, Python 3, Node.js, Bash, and Make installed:
 
-## Known limitations
-
-- State is reset when Hyprland reloads.
-- Fullscreen, groups, multi-monitor moves, and special workspaces need more
-  testing.
-- The bundled conditional keybinding integration supports Omarchy.
-- Compatibility outside Hyprland `0.56.x` is not yet guaranteed.
-
-Please report issues with your Hyprland version, monitor geometry, relevant
-configuration, and exact reproduction steps.
-
-## Development
-
-Run the full test and syntax suite:
-
-```bash
+```sh
 make check
 ```
 
-The geometry and navigation engine is isolated from Hyprland APIs so it can be
-tested with plain Lua. See [`docs/DESIGN.md`](docs/DESIGN.md) for the behavioral
-model and roadmap, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for related
-projects, important differences and technical background.
-
-## Contributing
-
-Contributions and real-world testing are welcome. Read
-[`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.
-
-Created by [kirollosatef](https://github.com/kirollosatef).
-
-## License
-
-MIT
+See [CHANGELOG.md](CHANGELOG.md) for the fork's changes and upstream history.

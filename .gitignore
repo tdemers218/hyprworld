@@ -1,3 +1,9 @@
 *.swp
 *.tmp
 .luacov
+
+# Local backups and generated Python files
+*.bak
+*.bak.*
+__pycache__/
+*.py[cod]

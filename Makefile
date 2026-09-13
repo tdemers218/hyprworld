@@ -1,9 +1,16 @@
 .PHONY: test check
 
 test:
+	node tests/settings.cjs
 	lua tests/run.lua
+	lua tests/groups.lua
+	lua tests/compaction_delay.lua
+	lua tests/gestures.lua
+	python3 tests/shortcuts.py
 	lua tests/hyprland_adapter.lua
+	lua tests/rapid_focus.lua
 	lua tests/omarchy_integration.lua
+	lua tests/workspaces.lua
 	bash tests/installer.sh
 
 check: test
