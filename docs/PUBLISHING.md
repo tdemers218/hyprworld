@@ -30,6 +30,12 @@ The marketplace requires a public repository, valid root manifest, README,
 license, and safe installation/removal. A listing requires a separate submission
 and approval; a successful manifest validation alone does not publish anything.
 
+The optional config installer and uninstaller ask for confirmation before they
+change `hyprland.lua`. Their `--yes` flag is reserved for an explicitly approved
+scripted action; unattended runs without that flag fail before changing the file.
+The normal Omarchy plugin add, enable, disable, update, and remove commands do
+not use these scripts.
+
 Suggested listing copy:
 
 > Hyprworld turns your desktop into a two-dimensional workspace. Arrange windows
