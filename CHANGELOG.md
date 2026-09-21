@@ -1,6 +1,6 @@
 # Changelog
 
-## Hyprworld 0.1.0 — unreleased
+## Hyprworld 0.1.0
 
 First independent release, derived from Hyprscroll2D.
 
@@ -8,8 +8,16 @@ First independent release, derived from Hyprscroll2D.
 - Add visible groups of up to four windows, drag grouping, and cell swapping.
 - Add interactive overview, minimap, continuous wheel zoom, and camera panning.
 - Add themed settings, shortcut validation, and configurable mouse focus.
-- Add five workspaces per monitor, a local workspace widget, and overview transitions.
+- Add shared workspace IDs, atomic swaps between monitors, and workspace fades.
+- Keep overview open across workspace swaps; search window metadata across workspaces.
+- Add three/four-finger swipes and two-finger pinch navigation.
+- Add custom placement paths with workspace targeting, clickable branches and keyboard editing.
+- Add per-group-size layouts, startup templates, readable key capture and conflict outlines.
+- Add icon-led settings with animated previews, live appearance controls and draft editing.
 - Add delayed compaction and focus/gesture regression coverage.
+- Load the native helper explicitly on fresh shell installations and restore native behavior when disabled.
+- Fix repeated paths with negative coordinates, template window reuse and startup placement cleanup.
+- Define the workspace animation curve independently of theme configuration.
 - Rewrite installation, migration, controls, and contributor documentation.
 
 The releases below belong to the original project, not Hyprworld.

@@ -85,7 +85,12 @@ end
 -- Legacy plugin controls no longer represent layout actions.
 for _, key in ipairs({"SUPER + L", "SUPER + code:20", "SUPER + code:21",
     "SUPER + SHIFT + code:20", "SUPER + SHIFT + code:21",
-    "SUPER + CTRL + ALT + LEFT", "SUPER + CTRL + ALT + RIGHT"}) do hl.unbind(key) end
+    "SUPER + CTRL + ALT + LEFT", "SUPER + CTRL + ALT + RIGHT",
+    "SUPER + J", "SUPER + P", "SUPER + HOME", "SUPER + ALT + HOME",
+    "SUPER + ALT + MINUS", "SUPER + CTRL + MINUS",
+    "SUPER + SHIFT + ALT + EQUAL", "SUPER + SHIFT + CTRL + EQUAL",
+    "SUPER + ALT + EQUAL", "SUPER + CTRL + EQUAL",
+    "SUPER + SHIFT + ALT + MINUS", "SUPER + SHIFT + CTRL + MINUS"}) do hl.unbind(key) end
 
 for _, dir in ipairs({"left", "right", "up", "down"}) do
     local suffix = dir:sub(1,1):upper() .. dir:sub(2)
@@ -100,7 +105,8 @@ for _, dir in ipairs({"left", "right", "up", "down"}) do
         "Resize " .. dir, "resize " .. dir)
 end
 -- Keep the saved shortcut IDs compatible while repurposing camera keys.
-hl.animation({leaf="workspaces",enabled=true,speed=3.5,bezier="easeOutQuint",style="slide"})
+hl.curve("hyprworld-workspace", {type="bezier",points={{0.23,1},{0.32,1}}})
+hl.animation({leaf="workspaces",enabled=true,speed=3.5,bezier="hyprworld-workspace",style="slidefade"})
 for _, spec in ipairs({{id="panLeft",key="LEFT",delta="r-1",label="Previous workspace"},
     {id="panRight",key="RIGHT",delta="r+1",label="Next workspace"}}) do
     local key=customizer_shortcut(spec.id,"SUPER + CTRL + "..spec.key)
@@ -155,5 +161,14 @@ for _, spec in ipairs({{button="272",mode="move"},{button="274",mode="pan"}}) do
             hl.dispatch(hl.dsp.layout("gesture-end"))
         elseif _G.__hyprworld_end_gesture then _G.__hyprworld_end_gesture() end
     end, {release=true, ignore_mods=true, non_consuming=true})
+end
+if hl.gesture then
+    local directory=debug.getinfo(1,"S").source:sub(2):match("^(.*)/[^/]+$")
+    dofile(directory.."/touchpad.lua").install(hl, {
+        focus=function(direction) route("focus "..direction,nil,direction=="up" and "-1" or direction=="down" and "1" or nil)() end,
+        workspace=function(delta) if workspace_nav then workspace_nav.step(delta) end end,
+        overview=function() if is_hyprworld_active() and _G.__hyprworld_toggle_overview then _G.__hyprworld_toggle_overview() end end,
+        zoom=function(delta) if is_hyprworld_active() then hl.dispatch(hl.dsp.layout("zoom-pinch "..tostring(delta))) end end,
+    })
 end
 return true

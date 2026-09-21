@@ -66,3 +66,15 @@ ticks(99); assert(runs==2,'five-second delay fired early')
 ticks(1); assert(runs==3,'five-second idle delay did not compact')
 assert(__hyprworld_preview():match('"compactSerial":3'),'compaction animation event missing')
 print('ok - compaction idle delay, restart, held drag, disabling and five-second timing')
+
+-- Deleting a window schedules the same delayed compaction, and another deletion
+-- restarts it even when the count is replaced by a newly mapped window.
+delay=200
+ctx.targets[4]=nil
+provider.recalculate(ctx)
+ticks(3); assert(runs==3,'deletion compacted too soon')
+ctx.targets[3]=nil
+provider.recalculate(ctx)
+ticks(3); assert(runs==3,'second deletion did not restart delay')
+ticks(1); assert(runs==4,'deletion did not compact')
+print('ok - deletion schedules and restarts compaction')

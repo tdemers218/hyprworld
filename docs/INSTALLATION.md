@@ -19,7 +19,7 @@ adds a marked block, validates syntax when `luac` is available, and reloads a
 running Hyprland instance. If there were no errors before and the reload adds
 errors, it restores the backup. Check `hyprctl configerrors` afterward.
 
-The integration assigns five workspaces per monitor. The installer's optional
+The integration uses shared workspaces with no fixed upper limit. The installer's optional
 number adds an explicit workspace rule (default 9); it does **not** restrict the
 plugin to that workspace:
 
@@ -27,7 +27,7 @@ plugin to that workspace:
 ~/.local/share/hyprworld/install.sh 8
 ```
 
-Workspace rules from this option should not conflict with your monitor banks.
+The installer builds the native swap helper against the installed Hyprland headers.
 The layout-only route still installs bindings that reference the shell UI;
 settings/overview UI requires the full shell plugin. Prefer the shell route for
 normal use.
@@ -36,6 +36,8 @@ Update with:
 
 ```sh
 git -C ~/.local/share/hyprworld pull --ff-only
+make -C ~/.local/share/hyprworld native
+hyprctl plugin unload ~/.local/share/hyprworld/native/build/shared-workspaces.so
 hyprctl reload
 hyprctl configerrors
 ```
@@ -43,6 +45,7 @@ hyprctl configerrors
 Uninstall using the script before deleting or moving the checkout:
 
 ```sh
+hyprctl plugin unload ~/.local/share/hyprworld/native/build/shared-workspaces.so
 ~/.local/share/hyprworld/uninstall.sh
 ```
 
@@ -58,6 +61,7 @@ The layout entry point is `layout/init.lua` and registers `lua:hyprworld`:
 
 ```lua
 local hyprworld = os.getenv("HOME") .. "/.local/share/hyprworld"
+hl.plugin.load(hyprworld .. "/native/build/shared-workspaces.so")
 dofile(hyprworld .. "/layout/init.lua")
 hl.workspace_rule({ workspace = "9", layout = "lua:hyprworld" })
 ```
@@ -67,3 +71,5 @@ Provide your own bindings using the custom-layout API. Do not load
 starting point, not a verified generic installation. No standalone QML shell
 is provided. The Lua preference reader defaults gracefully when settings are
 absent, but the bundled user interface requires Omarchy Shell.
+
+Run `make native` before loading the helper, and rebuild after upgrading Hyprland.

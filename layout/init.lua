@@ -108,7 +108,55 @@ local function context(ctx)
     for _, target in ipairs(ctx.targets or {}) do
         table.insert(ids, target_id(target, #ids + 1))
     end
+    if preferences.section then
+        local flow=preferences.section('workflow')
+        local next_path=preferences.section('placement')
+        if state.placement~=next_path then state.path_index=nil end
+        state.placement=next_path
+        if state.placement.scope=='specific' then
+            local applies=false
+            for _,id in ipairs(state.placement.workspaces or {}) do
+                if key=='workspace:'..tostring(id) then applies=true;break end
+            end
+            if not applies then state.placement=nil end
+        end
+        state.group_layouts=preferences.section('groups').layouts
+        state.compact_on_close=flow.compactOnClose~=false
+        state.compact_on_move=flow.compactOnMove~=false
+        state.preserve_focus=flow.preserveFocus==true
+        local function numeric(k,default,low,high) return math.max(low,math.min(high,tonumber(flow[k]) or default)) end
+        config.peek_x,config.peek_y=numeric('peekX',48,0,200),numeric('peekY',48,0,200)
+        config.gap_x,config.gap_y=numeric('gapX',12,0,100),numeric('gapY',12,0,100)
+        local w,h=numeric('defaultWidth',.85,.2,1),numeric('defaultHeight',.85,.2,1)
+        config.width_steps={w*.5/.85,w*.67/.85,w,1}
+        config.height_steps={h*.5/.85,h*.67/.85,h,1}
+    end
     core.sync(state, ids, active_id, config)
+    if preferences.section then
+        state.template_placed=state.template_placed or {}
+        for _,template in ipairs(preferences.section('startup').templates or {}) do
+            if template.workspace==tonumber(key:match('workspace:(.+)')) then
+                local used={}
+                for _,id in ipairs(ids) do
+                    local class=safe_field(descriptors[id].window,'class')
+                    for index,app in ipairs(template.apps or {}) do
+                        if class==app.class and app.class~='' and not used[index] then
+                            used[index]=true
+                            if not state.template_zoom_applied then state.zoom_value=math.max(.65,math.min(1.25,tonumber(template.zoom) or 1));state.template_zoom_applied=true end
+                            if not state.template_placed[id] then
+                                local col,row=tonumber(app.col) or 0,tonumber(app.row) or 0
+                                local count=0
+                                for other,pos in pairs(state.positions) do if other~=id and pos.col==col and pos.row==row then count=count+1 end end
+                                if count<4 then state.positions[id]={col=col,row=row,slot=count+1} end
+                                state.template_placed[id]=true
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
     state.defer_active_camera = true
 
     state.keep_connected = preferences.keep_connected()
@@ -142,6 +190,10 @@ local function context(ctx)
             local focused=state.positions[state.focused_id]
             local col,row=focused and focused.col,focused and focused.row
             core.compact(state)
+            if state.preserve_focus and focused and col and row then
+                local dx,dy=col-focused.col,row-focused.row
+                for _,pos in pairs(state.positions) do pos.col,pos.row=pos.col+dx,pos.row+dy end
+            end
             if focused and (focused.col~=col or focused.row~=row) then core.follow(state) end
             state.compact_serial=(state.compact_serial or 0)+1
         end
@@ -176,9 +228,9 @@ local function place_state(ctx, state, descriptors)
     end
     local first = descriptors[state.ids[1]]
     local monitor = first and safe_field(first.window, "monitor")
-    if state.overview or state.pending_focus_id then last_overview_key = workspace_key(ctx) end
+    if not overview_transfer and (state.overview or state.pending_focus_id) then last_overview_key = workspace_key(ctx) end
     snapshots[workspace_key(ctx)] = { tiles = tiles, overview = state.overview, compactSerial=state.compact_serial or 0,
-        workspaceId = tonumber(workspace_key(ctx):match("workspace:(.+)")), slideDirection=state.slideDirection or 0,
+        workspaceId = tonumber(workspace_key(ctx):match("workspace:(.+)")), slideDirection=state.slideDirection or 0, slideDirectionY=state.slideDirectionY or 0,
         commitAddress = state.pending_focus_id and descriptors[state.pending_focus_id] and descriptors[state.pending_focus_id].address or "",
         zoom = core.zoom_value(state, config), maxZoom = config.zoom_steps[#config.zoom_steps],
         cameraCol = state.camera.col, cameraRow = state.camera.row, area = ctx.area,
@@ -278,6 +330,17 @@ local function layout_msg(ctx, message)
                 end
             end
         end
+    elseif command == "zoom-pinch" then
+        local delta = tonumber(argument)
+        if not delta or delta ~= delta or math.abs(delta) > 5 then return true end
+        stop_zoom()
+        local low, high = config.zoom_steps[1], config.zoom_steps[#config.zoom_steps]
+        if state.overview and delta > 0 then
+            state.overview = false; state.pending_focus_id = state.focused_id
+        end
+        state.zoom_value = math.max(low, math.min(high, core.zoom_value(state, config) * math.exp(delta)))
+        if delta < 0 and state.zoom_value <= low then state.overview = true end
+        core.follow(state)
     elseif command == "overview-open" then
         end_gesture()
         state.pending_focus_id = nil
@@ -563,15 +626,11 @@ _G.__hyprworld_prepare_overview_transfer = function()
 end
 _G.__hyprworld_preview = function()
     if overview_transfer then return json(snapshots[last_overview_key] or {}) end
+    -- Workspace ownership is authoritative while exclusive layers leave window
+    -- focus stale (especially during an atomic two-monitor swap).
     local active = hl.get_active_window()
-    if not active and hl.get_active_workspace then
-        local ws=hl.get_active_workspace()
-        return json(snapshots["workspace:"..tostring(safe_field(ws,"id"))] or {})
-    end
-    if not active and last_overview_key then return json(snapshots[last_overview_key] or {}) end
-    if window_layout_name(active) ~= "lua:hyprworld" then return '{}' end
-    local ws = safe_field(active, "workspace")
-    local snapshot = snapshots["workspace:" .. tostring(safe_field(ws, "id"))] or {}
+    local ws = hl.get_active_workspace and hl.get_active_workspace() or safe_field(active, "workspace")
+    local snapshot = snapshots[ws and "workspace:" .. tostring(safe_field(ws, "id")) or last_overview_key] or {}
     snapshot.gesture = gesture and {mode=gesture.mode, ghost=gesture.ghost, drop=gesture.drop} or nil
     return json(snapshot)
 end
@@ -579,14 +638,13 @@ end
 _G.__hyprworld_overview_active = function()
     local state = last_overview_key and workspaces[last_overview_key]
     local active = hl.get_active_window()
-    local ws = safe_field(active, "workspace")
-    if not active and hl.get_active_workspace then ws=hl.get_active_workspace() end
+    local ws = hl.get_active_workspace and hl.get_active_workspace() or safe_field(active, "workspace")
     local same = not ws or last_overview_key == "workspace:" .. tostring(safe_field(ws, "id"))
     return same and state and state.overview or false
 end
 
 -- Empty workspaces have no layout callback, but overview still needs a state.
-_G.__hyprworld_set_overview = function(enabled, direction, commit)
+_G.__hyprworld_set_overview = function(enabled, direction, commit, directionY)
     local active=hl.get_active_window()
     local monitor=hl.get_active_monitor and hl.get_active_monitor() or safe_field(active,"monitor")
     local ws=hl.get_active_workspace and hl.get_active_workspace() or safe_field(active,"workspace")
@@ -599,7 +657,13 @@ _G.__hyprworld_set_overview = function(enabled, direction, commit)
         hl.dispatch(hl.dsp.layout("overview-close")); return
     end
     end_gesture(); stop_zoom()
-    state.overview=enabled; state.pending_focus_id=nil; state.slideDirection=direction or 0
+    for other_key, other in pairs(workspaces) do
+        if other_key ~= key then
+            other.overview = false; other.pending_focus_id = nil
+            if snapshots[other_key] then snapshots[other_key].overview=false; snapshots[other_key].commitAddress="" end
+        end
+    end
+    state.overview=enabled; state.pending_focus_id=nil; state.slideDirection=direction or 0; state.slideDirectionY=directionY or 0
     last_overview_key=key
     local snapshot=snapshots[key] or {tiles={},monitor=safe_field(monitor,"name") or "",
         monitorX=safe_field(monitor,"x") or 0,monitorY=safe_field(monitor,"y") or 0,
@@ -607,10 +671,10 @@ _G.__hyprworld_set_overview = function(enabled, direction, commit)
             w=(safe_field(monitor,"width") or 1920)/(safe_field(monitor,"scale") or 1),
             h=(safe_field(monitor,"height") or 1080)/(safe_field(monitor,"scale") or 1)},
         zoom=core.zoom_value(state,config),maxZoom=config.zoom_steps[#config.zoom_steps]}
-    snapshot.overview=enabled; snapshot.commitAddress=""; snapshot.workspaceId=id; snapshot.slideDirection=direction or 0
+    snapshot.overview=enabled; snapshot.commitAddress=""; snapshot.workspaceId=id; snapshot.slideDirection=direction or 0; snapshot.slideDirectionY=directionY or 0
     snapshots[key]=snapshot
     for _,binding in ipairs(_G.__hyprworld_mouse_bindings or {}) do binding:set_enabled(not enabled) end
-    if active and window_layout_name(active)=="lua:hyprworld" then hl.dispatch(hl.dsp.layout("refresh")) end
+    if active and safe_field(safe_field(active,"workspace"),"id")==id and window_layout_name(active)=="lua:hyprworld" then hl.dispatch(hl.dsp.layout("refresh")) end
     overview_transfer = false
     publish_snapshot(snapshots[key])
 end

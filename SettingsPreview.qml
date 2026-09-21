@@ -24,7 +24,7 @@ Rectangle {
             model: root.boxes
             Rectangle { required property var modelData; required property int index
                 x: modelData.x * map.factor; y: modelData.y * map.factor; width: modelData.w * map.factor; height: modelData.h * map.factor
-                color: "transparent"; radius: 2; opacity: root.preferences.minimap.opacity
+                color: Util.alpha(Color.background,root.preferences.minimap.fillOpacity); radius: root.preferences.minimap.radius; opacity: root.preferences.minimap.opacity
                 border.width: root.preferences.minimap.lineWidth + (index === 0 ? 1 : 0); border.color: index === 0 ? Color.accent : Color.foreground
             }
         }
@@ -34,11 +34,11 @@ Rectangle {
         Repeater {
             model: root.boxes
             Rectangle { required property var modelData; required property int index
-                width: (root.width - 64) / 3; height: 106; radius: Style.cornerRadius; color: Util.alpha(Color.background, root.preferences.overview.cardOpacity)
+                width: (root.width - 64) / 3; height: Math.min(150,root.preferences.overview.cardHeight*.7); radius: root.preferences.overview.radius; color: Util.alpha(Color.background, root.preferences.overview.cardOpacity)
                 border.width: 1; border.color: index === 0 ? Color.accent : Util.alpha(Color.foreground, 0.3)
-                Image { x: 12; y: 12; width: 24; height: 24; source: Quickshell.iconPath(modelData.icon, true) }
-                Text { x: 12; y: 47; width: parent.width - 24; text: modelData.name; color: Color.foreground; font.family: Style.font.family; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight }
-                Text { x: 12; y: 69; width: parent.width - 24; text: modelData.context; color: Color.muted; font.family: Style.font.family; font.pixelSize: 10; elide: Text.ElideRight }
+                Image { visible:root.preferences.overview.showIcons;x: 12; y: 12; width: 24; height: 24; source: Quickshell.iconPath(modelData.icon, true) }
+                Text { visible:root.preferences.overview.showAppNames;x: 12; y: 47; width: parent.width - 24; text: modelData.name; color: Color.foreground; font.family: Style.font.family; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight }
+                Text { visible:root.preferences.overview.showTitles;x: 12; y: 69; width: parent.width - 24; text: modelData.context; color: Color.muted; font.family: Style.font.family; font.pixelSize: 10; elide: Text.ElideRight }
             }
         }
     }

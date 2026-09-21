@@ -6,10 +6,45 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import "Settings.js" as Settings
+import "Search.js" as Search
 
 Item {
     id: root
     property var snapshot: ({})
+    OverlayState { id: overlayState }
+    property string searchQuery: ""
+    property int searchIndex: 0
+    readonly property var searchWindows: {
+        var windows = [], seen = {}
+        Hyprland.toplevels.values.forEach(function(t) {
+            var data = t.lastIpcObject || {}
+            if (!data.address) return
+            var copy = Object.assign({}, data)
+            copy.application = root.app(data).name
+            windows.push(copy); seen[data.address] = true
+        })
+        root.tiles.forEach(function(t) {
+            if (!seen[t.address]) windows.push(Object.assign({}, t, {workspace:{id:root.snapshot.workspaceId}, application:root.app(t).name}))
+        })
+        return windows
+    }
+    readonly property var searchResults: Search.rank(searchQuery, searchWindows.filter(function(w) {
+        return preferences.overview.searchScope!=="workspace" || (w.workspace && w.workspace.id===snapshot.workspaceId)
+    }).map(function(w) {
+        return preferences.overview.searchMetadata ? w : {address:w.address,class:w.class,title:w.title,workspace:w.workspace,application:w.application}
+    }))
+    onSearchQueryChanged: searchIndex = 0
+    onSearchResultsChanged: searchIndex = Math.max(0, Math.min(searchIndex, searchResults.length-1))
+    onOverviewChanged: if (!overview) searchQuery = ""
+    function selectSearchResult(index) {
+        var w = searchResults[index]
+        if (!w || !/^0x[0-9a-f]+$/i.test(w.address)) return
+        var ws = Number(w.workspace && w.workspace.id)
+        var code = "__hyprworld_set_overview(false); "
+        if (ws > 0 && Number.isInteger(ws)) code += "__hyprworld_workspace_nav.select(" + ws + "); "
+        code += 'hl.dispatch(hl.dsp.focus({window="address:' + w.address + '"}))'
+        Quickshell.execDetached(["hyprctl", "eval", code])
+    }
     property bool pushAvailable: false
     property bool compactAnimating: false
     Timer { id: compactAnimation; interval: 320; onTriggered: root.compactAnimating=false }
@@ -38,6 +73,20 @@ Item {
         })
         snapshot=next
     }
+    function navigateOverview(event) {
+                        var directions = {}; directions[Qt.Key_Left] = "left"; directions[Qt.Key_Right] = "right"
+                        directions[Qt.Key_Up] = "up"; directions[Qt.Key_Down] = "down"
+                        if (!directions[event.key]) return false
+                        var direction = directions[event.key]
+                        if ((event.modifiers & Qt.ControlModifier) && (direction === "left" || direction === "right")) root.switchWorkspace(direction === "right" ? 1 : -1)
+                        else if (event.modifiers & Qt.ShiftModifier) root.command("move " + direction)
+                        else if (event.modifiers & Qt.AltModifier) root.command("resize " + direction)
+                        else if (event.modifiers & Qt.ControlModifier) {
+                            root.command(direction === "up" ? "zoom in" : direction === "down" ? "zoom out" : "pan " + direction)
+                        } else root.command("focus " + direction)
+                        event.accepted = true
+                        return true
+    }
     function switchWorkspace(direction) {
         Quickshell.execDetached(["hyprctl","eval","if __hyprworld_workspace_nav then __hyprworld_workspace_nav.step("+direction+") end"])
     }
@@ -50,11 +99,15 @@ Item {
     onCommitAddressChanged: if (commitAddress && !overview) commitTimer.restart()
     // Focus only after the layer has released exclusive keyboard ownership.
     // This is the requested selection being committed once, not a focus repair.
-    Timer { id: commitTimer; interval: 60; onTriggered: if (root.commitAddress && !root.overview) root.command("overview-commit " + root.commitAddress) }
-    readonly property bool minimap: preferences.plugin.enabled && preferences.minimap.enabled && tiles.length > 1 && !overview && snapshot.zoom < snapshot.maxZoom
+    Timer { id: commitTimer; interval: root.overviewDuration + 20; onTriggered: if (root.commitAddress && !root.overview) root.command("overview-commit " + root.commitAddress) }
+    readonly property bool minimap: preferences.plugin.enabled && preferences.minimap.enabled && (!preferences.minimap.hideFullscreen || !overlayState.fullscreenActive) && tiles.length > (preferences.minimap.hideSingle ? 1 : 0) && !overview && (!preferences.minimap.hideMaxZoom || snapshot.zoom < snapshot.maxZoom)
+    property real minimapProgress: minimap ? 1 : 0
+    Behavior on minimapProgress { NumberAnimation { duration: root.preferences.minimap.fadeMs } }
+    readonly property int overviewDuration: preferences.overview.reducedMotion ? 0 : preferences.overview.animationMs
+    readonly property int overviewEasing: preferences.overview.easing==="linear" ? Easing.Linear : preferences.overview.easing==="in-out-cubic" ? Easing.InOutCubic : Easing.OutCubic
     property bool pending: false
     property real overviewProgress: overview ? 1 : 0
-    Behavior on overviewProgress { NumberAnimation { duration: root.preferences.overview.animationMs; easing.type: Easing.InOutCubic } }
+    Behavior on overviewProgress { NumberAnimation { duration: root.overviewDuration; easing.type: root.overviewEasing } }
     readonly property bool transitioning: overview || overviewProgress > 0.001
     property string wallpaper: ""
     property var preferences: Settings.defaults()
@@ -127,6 +180,7 @@ Item {
     readonly property real mapScale: Math.min(preferences.minimap.width / mapBounds.w, preferences.minimap.height / mapBounds.h)
     MinimapMotion {
         id: minimapMotion
+        duration: root.preferences.minimap.motionMs
         workspace: root.snapshot.monitor + ":" + root.snapshot.workspaceId
         targetFrame: {
             var rects={}
@@ -177,8 +231,9 @@ Item {
                 id: panel
                 property var outgoing: []
                 property real workspaceSlide: 0
-                property int slideDirection: 1
-                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.preferences.overview.animationMs; easing.type: Easing.OutCubic; onFinished: panel.outgoing=[] }
+                property real slideDirection: 1
+                property real slideDirectionY: 0
+                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.preferences.overview.reducedMotion ? 0 : root.preferences.overview.switchMs; easing.type: root.overviewEasing; onFinished: panel.outgoing=[] }
                 Connections {
                     target: root
                     function onChangingSnapshot(next) {
@@ -191,21 +246,22 @@ Item {
                         }
                         slideAnimation.stop()
                         panel.outgoing=previous
-                        panel.slideDirection=next.slideDirection || (next.workspaceId>root.snapshot.workspaceId ? 1 : -1)
+                        panel.slideDirection=next.slideDirection === undefined ? (next.workspaceId>root.snapshot.workspaceId ? 1 : -1) : next.slideDirection
+                        panel.slideDirectionY=next.slideDirectionY || 0
                         canvas.panX=0; canvas.panY=0
                         slideAnimation.restart()
                     }
                 }
                 required property var modelData
                 screen: modelData
-                visible: (root.transitioning || root.minimap || root.gesturing) && root.snapshot.monitor === modelData.name
+                visible: !overlayState.screensaverActive && (!root.preferences.minimap.hideFullscreen || !overlayState.fullscreenActive || root.overview) && (root.transitioning || root.minimapProgress>0.001 || root.gesturing) && root.snapshot.monitor === modelData.name
                 anchors { top: true; left: true; right: true; bottom: true }
                 color: "transparent"
                 exclusionMode: ExclusionMode.Ignore
                 WlrLayershell.namespace: "hyprworld-preview"
                 WlrLayershell.layer: WlrLayer.Overlay
                 WlrLayershell.keyboardFocus: root.overview ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-                mask: Region { item: root.overview ? background : null }
+                mask: Region { item: root.overview ? background : root.preferences.minimap.interactive && root.minimap ? canvas : null }
                 // Click-through hints: these never take input away from the compositor drag.
                 Rectangle {
                     readonly property var box: root.gesture.ghost || ({x:0,y:0,w:0,h:0})
@@ -234,12 +290,6 @@ Item {
                 Rectangle {
                     id: background
                     anchors.fill: parent
-                    layer.enabled: root.overviewProgress > 0.001 && root.overviewProgress < 0.999
-                    layer.effect: MultiEffect {
-                        blurEnabled: true
-                        blurMax: 12
-                        blur: Math.sin(root.overviewProgress * Math.PI) * 0.35
-                    }
                     color: root.transitioning && !root.preferences.overview.wallpaper ? Util.alpha(Color.background, root.overviewProgress) : "transparent"
                     Image {
                         anchors.fill: parent
@@ -249,38 +299,91 @@ Item {
                         visible: root.transitioning
                         opacity: root.overviewProgress
                     }
-                    MouseArea { anchors.fill: parent; enabled: root.overview; onClicked: root.command("overview-close") }
+                    Rectangle { anchors.fill: parent; visible: root.transitioning; color: "black"; opacity: root.preferences.overview.dim * root.overviewProgress }
+                    MouseArea { anchors.fill: parent; enabled: root.overview; onClicked: if (root.preferences.overview.emptyClickCloses) root.command("overview-close") }
                     focus: root.overview
                     Keys.onEscapePressed: root.command("overview-close")
                     Keys.onReturnPressed: root.command("overview-close")
-                    Keys.onPressed: function(event) {
-                        var directions = {}; directions[Qt.Key_Left] = "left"; directions[Qt.Key_Right] = "right"
-                        directions[Qt.Key_Up] = "up"; directions[Qt.Key_Down] = "down"
-                        if (!directions[event.key]) return
-                        var direction = directions[event.key]
-                        if ((event.modifiers & Qt.ControlModifier) && (direction === "left" || direction === "right")) root.switchWorkspace(direction === "right" ? 1 : -1)
-                        else if (event.modifiers & Qt.ShiftModifier) root.command("move " + direction)
-                        else if (event.modifiers & Qt.AltModifier) root.command("resize " + direction)
-                        else if (event.modifiers & Qt.ControlModifier) {
-                            root.command(direction === "up" ? "zoom in" : direction === "down" ? "zoom out" : "pan " + direction)
-                        } else root.command("focus " + direction)
-                        event.accepted = true
-                    }
+                    Keys.onPressed: function(event) { root.navigateOverview(event) }
                     Text {
                         visible: root.transitioning; opacity: root.overviewProgress
                         x: 36; y: 28
-                        text: "Workspace overview"
+                        text: root.preferences.overview.showWorkspace ? "Workspace " + (root.snapshot.workspaceId || "") + " overview" : "Overview"
                         color: Color.foreground; font.pixelSize: 25; font.bold: true
                     }
                     Text {
-                        visible: root.transitioning; opacity: root.overviewProgress; x: 36; y: 66
-                        text: root.tiles.length + " windows  ·  Arrows: focus  ·  Shift + arrows / drag: move & group  ·  Click / Enter / Esc: return"
+                        visible: root.transitioning && root.preferences.overview.showHints; opacity: root.overviewProgress; x: 36; y: 66
+                        text: root.tiles.length + (root.tiles.length===1 ? " window" : " windows") + "  ·  Arrows: focus  ·  Shift + arrows / drag: move & group  ·  Click / Enter / Esc: return"
                         color: Color.foreground; font.pixelSize: 13
+                    }
+                    Rectangle {
+                        x: 36; y: 96; width: parent.width - 72; height: 44; radius: 8
+                        visible: root.transitioning; opacity: root.overviewProgress
+                        color: Util.alpha(Color.background, 0.92)
+                        border.color: searchInput.activeFocus ? Color.accent : Util.alpha(Color.foreground, 0.35)
+                        Text {
+                            anchors.fill: parent; anchors.leftMargin: 14; verticalAlignment: Text.AlignVCenter
+                            visible: !searchInput.text
+                            text: "Search all windows — title, app, workspace, PID, tags…"
+                            color: Util.alpha(Color.foreground, 0.55); font.pixelSize: 15
+                        }
+                        TextInput {
+                            id: searchInput
+                            anchors.fill: parent; anchors.margins: 12
+                            color: Color.foreground; font.pixelSize: 15; selectByMouse: true; clip: true
+                            text: root.searchQuery
+                            onTextEdited: root.searchQuery = text
+                            onVisibleChanged: if (visible && root.overview) forceActiveFocus()
+                            Connections { target: root; function onOverviewChanged() { if (root.overview) searchInput.forceActiveFocus() } }
+                            Keys.priority: Keys.BeforeItem
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Escape) {
+                                    if (text) root.searchQuery = ""; else root.command("overview-close")
+                                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                    if (root.searchQuery.trim()) root.selectSearchResult(root.searchIndex)
+                                    else root.command("overview-close")
+                                } else if (root.searchQuery.trim() && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+                                    root.searchIndex = Math.max(0, Math.min(root.searchResults.length-1, root.searchIndex + (event.key === Qt.Key_Down ? 1 : -1)))
+                                } else {
+                                    if ((!root.searchQuery.trim() || (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) && root.navigateOverview(event)) return
+                                    event.accepted = false; return
+                                }
+                                event.accepted = true
+                            }
+                        }
+                    }
+                    ListView {
+                        id: results
+                        x: 36; y: 164; width: parent.width-72; height: parent.height-y-36
+                        visible: root.overview && !!root.searchQuery.trim()
+                        clip: true; spacing: 8; model: root.searchResults; currentIndex: root.searchIndex
+                        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+                            width: results.width; height: 72; radius: 8
+                            color: Util.alpha(index === root.searchIndex ? Color.accent : Color.background, 0.85)
+                            Text {
+                                x: 16; y: 12; width: parent.width-32
+                                text: modelData.title || modelData.class || "Untitled window"
+                                textFormat: Text.PlainText; elide: Text.ElideRight
+                                color: Color.foreground; font.pixelSize: 16
+                            }
+                            Text {
+                                x: 16; y: 40; width: parent.width-32
+                                text: (modelData.application || modelData.class || "Application") + " · Workspace " + ((modelData.workspace || {}).name || (modelData.workspace || {}).id || "?")
+                                textFormat: Text.PlainText; elide: Text.ElideRight
+                                color: Color.foreground; font.pixelSize: 12
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: root.selectSearchResult(index) }
+                        }
+                        Text { visible: results.count === 0; text: "No matching windows"; color: Color.foreground; font.pixelSize: 16 }
                     }
                     Item {
                         id: canvas
-                        transform: Translate { x: root.overview ? panel.slideDirection*panel.width*panel.workspaceSlide : 0 }
-                        visible: root.transitioning || root.minimap
+                        opacity: root.overview ? 1-panel.workspaceSlide : root.transitioning ? 1 : root.minimapProgress
+                        transform: Translate { x: root.overview ? panel.slideDirection*panel.width*panel.workspaceSlide : 0; y: root.overview ? panel.slideDirectionY*panel.height*panel.workspaceSlide : 0 }
+                        visible: (root.transitioning || root.minimapProgress>0.001) && !root.searchQuery.trim()
                         property real panX: 0
                         property real panY: 0
                         readonly property bool animateMinimap: root.minimap && !root.transitioning
@@ -288,23 +391,25 @@ Item {
                         // a 2x1 layout stays compact while larger layouts grow
                         // until they reach the small corner footprint.
                         x: root.transitioning ? 36 : root.preferences.minimap.corner.endsWith("right") ? parent.width-root.mapWidth-root.preferences.minimap.x : root.preferences.minimap.x
-                        y: root.transitioning ? 112 : root.preferences.minimap.corner.startsWith("bottom") ? parent.height-root.mapHeight-root.preferences.minimap.y : root.preferences.minimap.y
+                        y: root.transitioning ? 164 : root.preferences.minimap.corner.startsWith("bottom") ? parent.height-root.mapHeight-root.preferences.minimap.y : root.preferences.minimap.y
                         width: root.transitioning ? parent.width-x*2 : root.mapWidth
                         height: root.transitioning ? parent.height-y-36 : root.mapHeight
                         readonly property real cellW: root.transitioning
-                            ? Math.min(root.hasGroups ? 520 : 290, width / root.extent.cols)
+                            ? Math.min(root.hasGroups ? root.preferences.overview.groupWidth : root.preferences.overview.cardWidth, width / root.extent.cols)
                             : Math.min(24, width / root.extent.cols)
                         readonly property real cellH: root.transitioning
-                            ? Math.min(root.hasGroups ? 320 : 150, height / root.extent.rows)
+                            ? Math.min(root.hasGroups ? root.preferences.overview.groupHeight : root.preferences.overview.cardHeight, height / root.extent.rows)
                             : Math.min(22, height / root.extent.rows)
                         readonly property real originX: root.transitioning ? (width - cellW*root.extent.cols)/2+panX : 0
                         readonly property real originY: root.transitioning ? (height - cellH*root.extent.rows)/2+panY : 0
                         function cardRect(data) {
                             var p = data.part || {x:0,y:0,w:1,h:1}
-                            return {x: originX + (data.col-root.extent.col+p.x)*cellW + 3,
-                                y: originY + (data.row-root.extent.row+p.y)*cellH + 3,
-                                w: Math.max(2, cellW*p.w-6), h: Math.max(2, cellH*p.h-6)}
+                            return {x: originX + (data.col-root.extent.col+p.x)*cellW + root.preferences.overview.gap/2,
+                                y: originY + (data.row-root.extent.row+p.y)*cellH + root.preferences.overview.gap/2,
+                                w: Math.max(2, cellW*p.w-root.preferences.overview.gap), h: Math.max(2, cellH*p.h-root.preferences.overview.gap)}
                         }
+                        Rectangle { anchors.fill: parent; anchors.margins: -6; radius: 8; visible: !root.transitioning; color: Util.alpha(root.preferences.minimap.backgroundColor || Color.background,root.preferences.minimap.backgroundOpacity) }
+                        Text { visible: !root.transitioning && root.preferences.minimap.showWorkspace; y:-20; text:"Workspace "+root.snapshot.workspaceId;color:Color.foreground;font.pixelSize:11 }
                         Repeater {
                             id: currentTiles
                             model: tileModel
@@ -334,33 +439,37 @@ Item {
                                 readonly property real miniH: miniRect.h
                                 readonly property var area: root.snapshot.area || {x:0,y:0,w:panel.width,h:panel.height}
                                 readonly property real progress: root.transitioning ? root.overviewProgress : 1
-                                x: root.transitioning ? (box.x-area.x-canvas.x)*(1-progress)+targetX*progress : miniX
-                                y: root.transitioning ? (box.y-area.y+panel.height-area.h-canvas.y)*(1-progress)+targetY*progress : miniY
+                                x: root.transitioning ? (box.x-(root.snapshot.monitorX || 0)-canvas.x)*(1-progress)+targetX*progress : miniX
+                                y: root.transitioning ? (box.y-(root.snapshot.monitorY || 0)-canvas.y)*(1-progress)+targetY*progress : miniY
                                 width: root.transitioning ? box.w*(1-progress)+targetW*progress : miniW
                                 height: root.transitioning ? box.h*(1-progress)+targetH*progress : miniH
                                 opacity: root.transitioning ? Math.min(1, root.overviewProgress*4) : root.preferences.minimap.opacity
-                                radius: root.transitioning ? 10 : 3
-                                color: root.transitioning ? Util.alpha(Color.background, root.preferences.overview.cardOpacity) : "transparent"
-                                border.color: modelData.active ? Color.accent : Util.alpha(Color.foreground, 0.38)
+                                radius: root.transitioning ? root.preferences.overview.radius : root.preferences.minimap.radius
+                                color: root.transitioning ? Util.alpha(root.preferences.overview.backgroundColor || Color.background, root.preferences.overview.cardOpacity) : Util.alpha(root.preferences.minimap.backgroundColor || Color.background,root.preferences.minimap.fillOpacity)
+                                border.color: modelData.active ? (root.transitioning ? root.preferences.overview.activeColor : root.preferences.minimap.activeColor) || Color.accent : root.preferences.minimap.borderColor || Util.alpha(Color.foreground, 0.38)
                                 Behavior on border.color { enabled: canvas.animateMinimap; ColorAnimation { duration: 140 } }
                                 border.width: (root.transitioning ? 1 : root.preferences.minimap.lineWidth) + (modelData.active ? 1 : 0)
                                 clip: true
+                                MouseArea {
+                                    anchors.fill: parent; enabled: !root.transitioning && root.preferences.minimap.interactive
+                                    onClicked: if (/^0x[0-9a-f]+$/i.test(tile.modelData.address)) Hyprland.dispatch('hl.dsp.focus({window="address:'+tile.modelData.address+'"})')
+                                }
                                 Image {
                                     id: icon
-                                    visible: root.transitioning; opacity: root.overviewProgress
+                                    visible: root.transitioning ? root.preferences.overview.showIcons : root.preferences.minimap.showIcons; opacity: root.transitioning ? root.overviewProgress : 1
                                     x: 12; y: 8; width: Math.min(28, tile.height*.2); height: width
                                     source: Quickshell.iconPath(tile.application.icon, true) || Quickshell.iconPath("application-x-executable", true)
                                     fillMode: Image.PreserveAspectFit
                                 }
                                 Text {
-                                    visible: root.transitioning; opacity: root.overviewProgress; x: 12; y: icon.y+icon.height+10; width: parent.width-24
+                                    visible: root.transitioning && root.preferences.overview.showAppNames; opacity: root.overviewProgress; x: 12; y: icon.y+icon.height+10; width: parent.width-24
                                     text: tile.application.name; color: Color.foreground; font.pixelSize: tile.height < 100 ? 11 : 15; font.bold: true
                                     elide: Text.ElideRight; textFormat: Text.PlainText
                                 }
                                 Text {
-                                    visible: root.transitioning; opacity: root.overviewProgress; x: 12; y: icon.y+icon.height+(tile.height < 100 ? 26 : 34); width: parent.width-24
+                                    visible: root.transitioning ? root.preferences.overview.showTitles : root.preferences.minimap.showTitles && tile.width>50; opacity: root.transitioning ? root.overviewProgress : 1; x: 12; y: root.transitioning ? icon.y+icon.height+(tile.height < 100 ? 26 : 34) : tile.height/2-6; width: parent.width-24
                                     text: String(modelData.title || "Untitled window").replace(/[\r\n]+/g, " ")
-                                    color: Util.alpha(Color.foreground, 0.72); font.pixelSize: 12; elide: Text.ElideRight; textFormat: Text.PlainText
+                                    color: Util.alpha(Color.foreground, 0.72); font.pixelSize: root.preferences.overview.fontSize; elide: Text.ElideRight; textFormat: Text.PlainText
                                 }
                             }
                         }
@@ -445,7 +554,8 @@ Item {
                     Item {
                         anchors.fill: parent
                         visible: root.overview && panel.workspaceSlide>0
-                        transform: Translate { x: -panel.slideDirection*panel.width*(1-panel.workspaceSlide) }
+                        opacity: panel.workspaceSlide
+                        transform: Translate { x: -panel.slideDirection*panel.width*(1-panel.workspaceSlide); y: -panel.slideDirectionY*panel.height*(1-panel.workspaceSlide) }
                         Repeater {
                             model: panel.outgoing
                             Rectangle {

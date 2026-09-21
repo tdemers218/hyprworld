@@ -100,3 +100,27 @@ response = registered.provider.layout_msg(ctx, "toggle-max")
 assert(response == true, "maximum toggle command was rejected")
 
 print("ok - mocked Hyprland adapter")
+
+-- A configured path only affects the selected workspaces.
+local real_open=io.open
+local path_json='{"placement":{"enabled":true,"preset":"vertical","scope":"specific","workspaces":[21]}}'
+io.open=function(path,mode)
+    if path:match('/hyprworld%.json$') then return {read=function()return path_json end,close=function()end} end
+    return real_open(path,mode)
+end
+local function scoped_pair(workspace)
+    local first,second=target('scope'..workspace..'a',true),target('scope'..workspace..'b',false)
+    first.window.workspace.id,second.window.workspace.id=workspace,workspace
+    active_window=first.window
+    registered.provider.recalculate({area=ctx.area,targets={first,second}})
+    return first.placed,second.placed
+end
+local first,second=scoped_pair(21)
+assert(first.y<second.y and first.x==second.x,'selected workspace must use vertical path')
+first,second=scoped_pair(22)
+assert(first.x<second.x,'unselected workspace must retain default placement')
+path_json='{"placement":{"enabled":true,"preset":"vertical","scope":"specific","workspaces":[]}}'
+first,second=scoped_pair(23)
+assert(first.x<second.x,'empty workspace selection must not activate path')
+io.open=real_open
+print('ok - placement workspace selection and empty scope')

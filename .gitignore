@@ -7,3 +7,5 @@
 *.bak.*
 __pycache__/
 *.py[cod]
+
+/native/build/

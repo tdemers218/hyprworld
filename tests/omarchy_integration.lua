@@ -23,7 +23,8 @@ _G.o = {
 
 _G.hl = {
     config = function(options) assert(options.binds.scroll_event_delay == 0) end,
-    animation = function(options) assert(options.style == "slide" and options.enabled) end,
+    curve = function() end,
+        animation = function(options) assert(options.style == "slidefade" and options.enabled) end,
     bind = function(keys, action, options)
         bindings[keys] = action
         return {set_enabled=function() end}
@@ -130,3 +131,8 @@ assert(bindings["SUPER + LEFT"] == "native" and bindings["SUPER + F9"], "disable
 _G.__hyprworld_enabled = nil
 io.open = real_open
 print("ok - Omarchy integration, arbitrary remapping and disabled controller")
+
+for _,key in ipairs({'SUPER + J','SUPER + P','SUPER + HOME','SUPER + ALT + HOME',
+ 'SUPER + ALT + MINUS','SUPER + CTRL + EQUAL','SUPER + SHIFT + CTRL + MINUS'}) do
+ assert(bindings[key]==nil,'obsolete layout shortcut remains: '..key)
+end

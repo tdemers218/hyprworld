@@ -51,6 +51,7 @@ esac
 
 escaped_repo=${repo_dir//\\/\\\\}
 escaped_repo=${escaped_repo//\"/\\\"}
+if [ "${HYPRWORLD_SKIP_NATIVE_BUILD:-0}" != "1" ]; then bash "$repo_dir/native/build.sh"; fi
 timestamp="$(date +%Y%m%d%H%M%S)"
 backup_file="${config_file}.hyprworld.bak.${timestamp}"
 before_errors=""
@@ -65,6 +66,7 @@ cp -p -- "$config_file" "$backup_file"
   printf '\n%s\n' "$start_marker"
   printf 'do\n'
   printf '  local hyprworld = "%s"\n' "$escaped_repo"
+  printf '  hl.plugin.load(hyprworld .. "/native/build/shared-workspaces.so")\n'
   printf '  dofile(hyprworld .. "/layout/init.lua")\n'
   printf '  dofile(hyprworld .. "/integration/omarchy.lua")\n'
   printf '  hl.workspace_rule({ workspace = "%s", layout = "lua:hyprworld" })\n' "$workspace"
@@ -93,6 +95,6 @@ if [ "${HYPRWORLD_SKIP_RELOAD:-0}" != "1" ] && command -v hyprctl >/dev/null 2>&
   fi
 fi
 
-printf 'Installed Hyprworld with five workspaces per monitor and extra workspace %s.\n' "$workspace"
+printf 'Installed Hyprworld with shared workspaces and explicit workspace %s.\n' "$workspace"
 printf 'Config backup: %s\n' "$backup_file"
 printf 'Press Super+%s, open a few windows, and use Super+Arrow to explore.\n' "$workspace"

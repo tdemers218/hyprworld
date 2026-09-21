@@ -47,7 +47,8 @@ class Keymap:
             _fields_ = [(k, C.c_char_p) for k in ("rules", "model", "layout", "variant", "options")]
         def option(key):
             data = json.loads(subprocess.check_output(["hyprctl", "-j", "getoption", "input:kb_"+key], text=True))
-            return str(data.get("str", "")).encode() or None
+            value = str(data.get("str", ""))
+            return None if value in ("", "[[EMPTY]]") else value.encode()
         names = Names(*(option(k) for k in ("rules", "model", "layout", "variant", "options")))
         self.ctx = lib.xkb_context_new(0)
         self.map = lib.xkb_keymap_new_from_names(self.ctx, C.byref(names), 0)
@@ -74,6 +75,20 @@ class Keymap:
         # Keep symbol identity as well, for keys absent from the current keymap.
         return {"sym:"+str(sym)} | {"code:"+str(c) for c in self.codes.get(sym, set())}
 
+    def key_names(self):
+        lib = self.lib
+        lib.xkb_keysym_get_name.argtypes = [C.c_uint32, C.c_char_p, C.c_size_t]
+        lib.xkb_keysym_get_name.restype = C.c_int
+        names = {}
+        for code in range(lib.xkb_keymap_min_keycode(self.map), lib.xkb_keymap_max_keycode(self.map)+1):
+            syms = C.POINTER(C.c_uint32)()
+            count = lib.xkb_keymap_key_get_syms_by_level(self.map, code, 0, 0, C.byref(syms))
+            if count:
+                name = C.create_string_buffer(128)
+                if lib.xkb_keysym_get_name(syms[0], name, len(name)) > 0:
+                    names[str(code)] = name.value.decode().upper()
+        return names
+
     def close(self):
         self.lib.xkb_keymap_unref(self.map)
         self.lib.xkb_context_unref(self.ctx)
@@ -99,7 +114,7 @@ def validate(shortcuts, bindings, keymap):
         seen.append((action, mask, identity))
         for binding in bindings:
             if restoring_default: continue
-            if binding.get("modmask") != mask or str(binding.get("description", "")).startswith("Hyprworld: "):
+            if binding.get("modmask") != mask or str(binding.get("description", "")).startswith(("Hyprworld: ", "Hyprscroll 2D Max: ")):
                 continue
             if binding.get("keycode", 0):
                 bound = {"code:"+str(binding["keycode"])}
@@ -111,15 +126,41 @@ def validate(shortcuts, bindings, keymap):
         result[action] = chord
     return result
 
+def inspect(shortcuts, bindings, keymap):
+    conflicts, normalized, identities = {}, {}, {}
+    for action, raw in shortcuts.items():
+        try:
+            normalized.update(validate({action:raw}, bindings, keymap))
+        except ValueError as error:
+            conflicts[action] = str(error)
+        try:
+            chord, mask, key = parse(raw)
+            identities[action] = (mask, keymap.identity(key))
+        except ValueError:
+            pass
+    actions = list(identities)
+    for i, action in enumerate(actions):
+        mask, identity = identities[action]
+        for other in actions[i+1:]:
+            other_mask, other_identity = identities[other]
+            if mask == other_mask and identity & other_identity:
+                conflicts[action] = "Same shortcut as " + other + "."
+                conflicts[other] = "Same shortcut as " + action + "."
+    return {"shortcuts":normalized, "conflicts":conflicts,
+            "error":next(iter(conflicts.values()), "")}
+
 def main():
     keymap = None
     try:
+        keymap = Keymap()
+        if sys.argv[1] == "--keynames":
+            print(json.dumps(keymap.key_names()))
+            return
         shortcuts = json.loads(sys.argv[1])
         bindings = json.loads(subprocess.check_output(["hyprctl", "-j", "binds"], text=True))
-        keymap = Keymap()
-        print(json.dumps({"shortcuts": validate(shortcuts, bindings, keymap), "error": ""}))
+        print(json.dumps(inspect(shortcuts, bindings, keymap)))
     except (ValueError, OSError, subprocess.SubprocessError, IndexError) as error:
-        print(json.dumps({"error": str(error)}))
+        print(json.dumps({"error": str(error), "conflicts": {}}))
     finally:
         if keymap: keymap.close()
 

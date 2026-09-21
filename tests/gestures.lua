@@ -153,3 +153,16 @@ assert(__hyprworld_overview_active() and __hyprworld_preview():match('"workspace
 __hyprworld_toggle_overview()
 assert(not __hyprworld_overview_active())
 print('ok - overview toggles on empty workspaces without a layout callback')
+
+-- Active-window focus may lag behind the monitor during a workspace transfer.
+active=ctx.targets[1].window
+hl.get_active_workspace=function() return {id=10} end
+__hyprworld_set_overview(true)
+assert(__hyprworld_overview_active(), 'stale window focus closed destination overview')
+assert(__hyprworld_preview():match('"workspaceId":10'), 'preview followed stale window focus')
+__hyprworld_prepare_overview_transfer()
+provider.recalculate(ctx)
+assert(__hyprworld_preview():match('"workspaceId":10'), 'transfer replaced frozen preview')
+__hyprworld_set_overview(true)
+assert(__hyprworld_overview_active())
+print('ok - overview uses workspace ownership during stale focus and transfers')

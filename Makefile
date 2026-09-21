@@ -1,6 +1,15 @@
-.PHONY: test check
+.PHONY: test check native
+
+native:
+	bash native/build.sh
 
 test:
+	lua tests/bootstrap.lua
+	lua tests/arrangements.lua
+	python3 tests/startup.py
+	node tests/search.cjs
+	lua tests/touchpad.lua
+	node tests/workspace_model.cjs
 	node tests/settings.cjs
 	lua tests/run.lua
 	lua tests/groups.lua

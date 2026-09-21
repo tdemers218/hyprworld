@@ -1,24 +1,51 @@
-# First publication
+# Publishing and maintaining the listing
 
-The working tree is prepared for an independent fork. No release has been
-published and no commit is created by the preparation itself.
+Hyprworld uses the plugin ID `io.github.tdemers218.hyprworld` and repository
+`https://github.com/tdemers218/hyprworld`. Keep the manifest, widget module name,
+README commands and release tag consistent.
 
-1. Use **Hyprworld** as the public project name.
-2. Create `tdemers218/hyprworld` on GitHub. Installation instructions already
-   target `https://github.com/tdemers218/hyprworld.git`.
-3. Preserve upstream history and credit. In the development checkout, `origin`
-   may still point at `kirollosatef/hyprscroll2d`; inspect `git remote -v` and set
-   your own push destination before pushing. Do not push this fork to upstream.
-4. Run `make check` and `omarchy plugin validate .` in an Omarchy environment.
-5. Review `git diff` and `git status --short`, including new files. Local `.bak.*`
-   files and Python caches are ignored, not deleted.
-6. Test an installation of the renamed plugin in a prepared Omarchy session,
-   including migration, settings, overview, monitor switching, and removal.
-7. Add an actual screenshot or recording of the fork if desired. The inherited
-   `preview.png` is historical and is not used as a current README demo.
-8. Commit and push to your own repository. When ready to release, replace the
-   unreleased changelog heading with the release date and tag `v0.1.0`.
+## Release checks
 
-The package ID is `io.github.tdemers218.hyprworld`. Keep `manifest.json` and `Workspaces.qml` consistent if changing it.
-A marketplace listing is a separate submission; this repository does not claim
-marketplace approval or bundled Omarchy status.
+1. Run `make check`, `make native`, and `omarchy plugin validate .`.
+2. Run the [isolated compositor checks](../native/README.md), including native
+   helper disable behavior, plus settings Apply/Revert and startup launching.
+3. Run `python3 tests/live_package.py` for a fresh installation with the public
+   plugin ID. Build the native helper before enabling. Test update, migration and removal too.
+4. Review all tracked and untracked files. Commit the QML components, native
+   source, tests and current `preview.png`; exclude native build output,
+   temporary files, preferences from a real session, and logs.
+5. Match `manifest.json` version to [CHANGELOG.md](../CHANGELOG.md). Set the release
+   date when the release is actually published, then create the matching tag.
+6. Inspect `git remote -v` before pushing. This fork must be pushed to its own
+   repository, not the original Hyprscroll2D upstream.
+
+The GitHub workflow runs compositor-independent tests. It does not compile the
+native helper or certify compatibility with a new Hyprland version. Rebuild and
+repeat the live checks for each supported compositor upgrade.
+
+## Marketplace submission
+
+Follow the [official publishing guide](https://plugins.omarchy.org/publish.html).
+The marketplace requires a public repository, valid root manifest, README,
+license, and safe installation/removal. A listing requires a separate submission
+and approval; a successful manifest validation alone does not publish anything.
+
+Suggested listing copy:
+
+> Hyprworld turns your desktop into a two-dimensional workspace. Arrange windows
+> in visible groups, find them in a searchable overview, and navigate with a
+> minimap, keyboard or touchpad. Design opening paths, choose group layouts, and
+> save startup workspace templates through themed visual settings.
+
+Category: **Compositor**. Suggested tags: **Hyprland**, **workspaces**, **layout**,
+**overview**, **productivity**.
+
+Make the build requirement prominent in the listing: Omarchy 4.0.3 and Hyprland
+0.56.2 are the tested baseline; this plugin requires a C++23 native helper built
+against the exact running Hyprland version. It is an Omarchy Shell plugin, not a
+`hyprpm` package. Link the [installation](../README.md#install) and
+[migration](MIGRATING.md) instructions and retain upstream attribution.
+
+The repository preview depicts current settings with sample data. Update it
+when the interface changes. Never submit screenshots containing private window
+titles, user paths, or messages.

@@ -90,6 +90,20 @@ function M.part(state, id, members)
         [3] = { {0, 0, .5, 1}, {.5, 0, .5, .5}, {.5, .5, .5, .5} },
         [4] = { {0, 0, .5, .5}, {.5, 0, .5, .5}, {.5, .5, .5, .5}, {0, .5, .5, .5} },
     }
+    local custom=state.group_layouts and state.group_layouts[tostring(#members)]
+    if custom and #members>1 then
+        local n,mode,r=#members,custom.mode,math.max(.2,math.min(.8,tonumber(custom.ratio) or .5))
+        local x,y,w,h=0,0,1,1
+        if mode=='columns' then x,w=(index-1)/n,1/n
+        elseif mode=='rows' then y,h=(index-1)/n,1/n
+        elseif mode=='grid' then local slot=n==4 and index>=3 and 7-index or index;x,y,w,h=(slot-1)%2/2,math.floor((index-1)/2)/math.ceil(n/2),.5,1/math.ceil(n/2)
+        elseif mode=='master-left' or mode=='master-right' or mode=='master-top' then
+            if index==1 then w=r else x,y,w,h=r,(index-2)/(n-1),1-r,1/(n-1) end
+            if mode=='master-right' then x=1-x-w end
+            if mode=='master-top' then x,y,w,h=y,x,h,w end
+        end
+        return {x=x,y=y,w=w,h=h,index=index,count=n}
+    end
     local p = (parts[#members] or parts[1])[index] or parts[1][1]
     return { x = p[1], y = p[2], w = p[3], h = p[4], index = index, count = #members }
 end
@@ -107,15 +121,20 @@ function M.sync(state, ids, active_id, config)
         end
     end
 
+    local removed = false
     for id in pairs(state.positions) do
         if not present[id] then
+            removed = true
             state.positions[id] = nil
+            if state.template_placed then state.template_placed[id]=nil end
             state.width_step_by_id[id] = nil
             state.height_step_by_id[id] = nil
             state.align_x_by_id[id] = nil
             state.align_y_by_id[id] = nil
         end
     end
+
+    if removed and state.on_move and state.compact_on_close~=false then state.on_move() end
 
     state.ids = unique_ids
 
@@ -132,6 +151,34 @@ function M.sync(state, ids, active_id, config)
                 state.positions[id] = { col = 0, row = 0 }
             end
 
+            local path=state.placement
+            if path and path.enabled then
+                local nodes=path.nodes or {}
+                if path.preset=='horizontal' then nodes={{col=0,row=0,capacity=1}}
+                elseif path.preset=='vertical' then nodes={{col=0,row=0,capacity=1}} end
+                local counts={}
+                for other,pos in pairs(state.positions) do if other~=id then local k=position_key(pos.col,pos.row);counts[k]=(counts[k] or 0)+1 end end
+                local chosen
+                local start=path.fillHoles==false and (state.path_index or 1) or 1
+                local minCol,maxCol,minRow,maxRow=0,0,0,0
+                for _,n in ipairs(nodes) do
+                    minCol=math.min(minCol,n.col or 0);maxCol=math.max(maxCol,n.col or 0)
+                    minRow=math.min(minRow,n.row or 0);maxRow=math.max(maxRow,n.row or 0)
+                end
+                for step=start,start+4096 do
+                    local base=nodes[(step-1)%math.max(1,#nodes)+1] or {col=0,row=0,capacity=1}
+                    local cycle=math.floor((step-1)/math.max(1,#nodes))
+                    local vertical=path.preset=='vertical'
+                    local col=(base.col or 0)+(vertical and 0 or cycle*(maxCol-minCol+1))
+                    local row=(base.row or 0)+(vertical and cycle*(maxRow-minRow+1) or 0)
+                    if cycle>0 and path.overflow~='repeat' and path.preset=='custom' then col=maxCol+step-#nodes;row=0;base={capacity=1} end
+                    local k=position_key(col,row);local count=counts[k] or 0
+                    if count<math.max(1,math.min(4,base.capacity or 1)) then
+                        chosen={col=col,row=row,slot=count+1};state.path_index=step;break
+                    end
+                end
+                if chosen then state.positions[id]=chosen end
+            end
             state.width_step_by_id[id] = config.default_width_step
             state.height_step_by_id[id] = config.default_height_step
         end
@@ -330,7 +377,7 @@ function M.move_to(state, destination_col, destination_row)
         focused.slot = 1
     end
 
-    if state.on_move then state.on_move()
+    if state.on_move then if state.compact_on_move~=false then state.on_move() end
     elseif state.keep_connected then M.compact(state) end
     M.follow(state)
     return true

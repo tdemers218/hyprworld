@@ -44,4 +44,14 @@ class Shortcuts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"reserved"):
                 v.validate({"zoomIn":chord},[],Keymap())
 
+    def test_reports_both_duplicates_and_external_conflicts(self):
+        report=v.inspect({"one":"SUPER + H","two":"SUPER + code:43","three":"CTRL + J"},
+                         [{"modmask":4,"key":"J","description":"Launcher"}],Keymap())
+        self.assertEqual(set(report['conflicts']),{'one','two','three'})
+        self.assertIn('Launcher',report['conflicts']['three'])
+    def test_clean_report(self):
+        report=v.inspect({"one":"SUPER + H","two":"CTRL + J"},[],Keymap())
+        self.assertFalse(report['conflicts'])
+        self.assertEqual(report['error'],'')
+
 unittest.main()

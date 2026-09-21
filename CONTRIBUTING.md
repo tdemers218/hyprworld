@@ -29,6 +29,10 @@ and monitor switching. Test configuration reload and disable/re-enable too.
 Record the Hyprland and Omarchy versions used. Automated tests cannot establish
 that QML rendering or compositor interaction works on a particular release.
 
+`make native` builds the native helper using C++23, pkg-config and matching Hyprland
+headers. See [native testing](native/README.md) for the isolated multi-monitor tests.
+Never run those tests against your working desktop.
+
 `tests/tst_minimap_motion.qml` is an optional Qt Quick Test regression test.
 `tests/live_mouse_check.py` moves the real pointer and changes window focus;
 run it manually only in a prepared session with visible neighboring tiles.

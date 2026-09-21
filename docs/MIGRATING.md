@@ -7,7 +7,7 @@ workspace assignments and keybindings overlap.
 
 ## 1. Preserve preferences
 
-Before removing the old plugin, copy preferences and monitor ordering, without
+Before removing the old plugin, copy preferences, without
 overwriting any existing Hyprworld settings:
 
 ```sh
@@ -18,7 +18,6 @@ base = Path.home() / '.config/omarchy'
 old_plugin = base / 'plugins/io.github.kirollosatef.hyprscroll2d'
 for destination, candidates in (
     (base / 'hyprworld.json', [base / 'hyprscroll2d.json', old_plugin / 'customizer.json']),
-    (base / 'hyprworld-monitors', [base / 'hyprscroll2d-monitors']),
 ):
     if destination.exists():
         print(f'Keeping existing {destination}')
@@ -30,8 +29,8 @@ for destination, candidates in (
 PY
 ```
 
-Copying monitor order preserves the relationship between connector names and
-workspace ID banks. Settings migration is explicit; Hyprworld does not consume
+Monitor-order files are no longer used: workspace IDs are shared on every screen.
+Settings migration is explicit; Hyprworld does not consume
 or modify the old plugin's preference files automatically.
 
 ## 2. Remove the old integration
@@ -39,6 +38,8 @@ or modify the old plugin's preference files automatically.
 If installed as a shell plugin:
 
 ```sh
+# If the previous fork loaded the shared-workspace helper, unload it first:
+hyprctl plugin unload ~/.config/omarchy/plugins/io.github.kirollosatef.hyprscroll2d/native/build/shared-workspaces.so
 omarchy plugin remove io.github.kirollosatef.hyprscroll2d --yes
 hyprctl reload
 hyprctl configerrors
@@ -55,7 +56,7 @@ ID from your bar configuration. Keep the old checkout if you want a rollback.
 ## 3. Install Hyprworld
 
 Follow the [README](../README.md#install) using the new repository URL. Verify
-settings, local workspace numbers, and shortcuts before continuing normal work.
+settings, shared workspace numbers, and shortcuts before continuing normal work.
 Existing groups and camera state cannot be migrated; they reset on reload.
 
 | Interface | Previous fork | Hyprworld |
@@ -64,7 +65,7 @@ Existing groups and camera state cannot be migrated; they reset on reload.
 | Layout | `lua:hyprscroll2d-v16` (older versions: `lua:hyprscroll2d`) | `lua:hyprworld` |
 | Shell IPC target | `hyprscroll2d` | `hyprworld` |
 | Preferences | `hyprscroll2d.json` | `hyprworld.json` |
-| Monitor order | `hyprscroll2d-monitors` | `hyprworld-monitors` |
+| Monitor order | Legacy monitor-order files | Not used; workspace IDs are shared |
 | Installer config override | `HYPRSCROLL2D_HYPRLAND_CONFIG` | `HYPRWORLD_HYPRLAND_CONFIG` |
 | Installer skip reload | `HYPRSCROLL2D_SKIP_RELOAD` | `HYPRWORLD_SKIP_RELOAD` |
 

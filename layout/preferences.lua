@@ -1,4 +1,17 @@
 local M = {}
+local directory=debug.getinfo(1,"S").source:sub(2):match("^(.*)/[^/]+$")
+local json=dofile(directory.."/json.lua")
+local cached_raw, cached_data
+function M.data()
+ local raw=M.read()
+ if raw~=cached_raw then
+  local ok,result=pcall(json.decode,raw)
+  cached_raw,cached_data=raw,ok and type(result)=='table' and result or {}
+ end
+ return cached_data or {}
+end
+function M.section(name) local value=M.data()[name];return type(value)=='table' and value or {} end
+
 function M.read()
     local home = os.getenv("HOME") or ""
     local file = io.open(home .. "/.config/omarchy/hyprworld.json", "r")

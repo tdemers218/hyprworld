@@ -3,12 +3,12 @@
   "id": "io.github.tdemers218.hyprworld",
   "name": "Hyprworld",
   "version": "0.1.0",
-  "author": "Tristan Demers and Hyprworld contributors",
+  "author": "Tristan Demers",
   "license": "MIT",
-  "description": "An enhanced two-dimensional Hyprland layout with window groups, a minimap, overview, and themed visual settings.",
+  "description": "A two-dimensional workspace with window groups, searchable overview, minimap, touchpad navigation, and customizable placement paths.",
   "kinds": [
     "service",
-    "bar-widget"
+    "window manager"
   ],
   "keepLoaded": true,
   "entryPoints": {
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Hyprworld workspaces",
-    "description": "Five local workspaces on each monitor",
+    "description": "Shared workspace numbers with monitor swaps and occupied-workspace indicators",
     "category": "Compositor",
     "allowMultiple": false
   }

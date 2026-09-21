@@ -12,10 +12,11 @@ substantially expanded grouping, navigation, and settings workflow. See
 
 Install this project through Omarchy, not `hyprpm`.
 
-**Status:** 0.1.0, unreleased and experimental. The inherited development baseline
-is Hyprland 0.56.2 with the Lua custom-layout API. Compatibility with other
-versions is unverified. This repository contains Lua and QML, with no compiled
-Hyprland plugin to build.
+**Compatibility:** tested with Omarchy 4.0.3 and Hyprland 0.56.2 (Lua configuration).
+The native helper must be compiled against the exact running Hyprland version.
+The interface uses Omarchy Shell components and is not a standalone Quickshell app.
+
+![Hyprworld settings](preview.png)
 
 ## Features
 
@@ -24,32 +25,44 @@ Hyprland plugin to build.
 - Interactive overview with keyboard navigation, dragging, and workspace transitions.
 - Minimap with adjustable placement, dimensions, opacity, and outlines.
 - Continuous mouse-wheel zoom and keyboard zoom presets.
-- Five local workspaces per monitor, with stable saved monitor assignments.
-- Themed settings, 19 configurable shortcuts, hover or click focus, and delayed compaction.
+- Shared workspaces with no fixed upper limit; requesting a visible remote workspace swaps monitors.
+- Searchable settings with 19 configurable shortcuts, key capture, and conflict highlighting.
+- Custom opening paths, optional workspace targeting, and layouts for each group size.
+- Captured startup workspace templates with application launching and grouping.
+- Hover or click focus, configurable compaction, and touchpad navigation.
 
 ## Install
 
 You need an Omarchy installation with its Lua Hyprland configuration, Omarchy
-Shell/Quickshell, `omarchy plugin`, and Python 3 for shortcut validation.
+Shell/Quickshell, `omarchy plugin`, Python 3, libxkbcommon, and the native build dependencies below.
 The QML interface depends on Omarchy's shell components; it is not a standalone
 Quickshell configuration.
 
-Once published at [tdemers218/hyprworld](https://github.com/tdemers218/hyprworld), install with:
+Install from [tdemers218/hyprworld](https://github.com/tdemers218/hyprworld).
+Build the native helper **before enabling** the plugin. The following add command
+installs without the interactive enable prompt:
 
 ```sh
-omarchy plugin add https://github.com/tdemers218/hyprworld.git --enable
+omarchy plugin add https://github.com/tdemers218/hyprworld.git --yes
+make -C ~/.config/omarchy/plugins/io.github.tdemers218.hyprworld native
+omarchy plugin enable io.github.tdemers218.hyprworld
 ```
 
 The plugin ID is `io.github.tdemers218.hyprworld`. Do not use the Hyprscroll2D upstream URL: it
 installs the original plugin. If migrating, follow [the migration guide](docs/MIGRATING.md)
 first; run only one of the two layouts' Omarchy integrations at a time.
 
-Enabling the plugin assigns **five workspaces to every connected monitor** and
-replaces the workspace and layout shortcuts listed below. It is not limited to
-workspace 9. Monitor order is saved in `~/.config/omarchy/hyprworld-monitors`:
-the first monitor owns IDs 1–5, the next 6–10, and so on. The widget displays
-local numbers 1–5 on each screen. Disconnected monitors retain their saved bank;
-Hyprland may temporarily relocate their workspaces.
+All monitors share the same workspace numbers. Requesting a workspace visible
+on another monitor swaps it with the current workspace, keeping focus on the
+requesting monitor. Hidden remote workspaces move here without changing the
+other monitor's visible workspace. The swap animation follows monitor positions,
+including vertical and diagonal arrangements. Mouse movement and Super+Tab still
+change monitor focus normally. The bar always shows 1–5, higher workspace numbers that contain windows, and the current workspace even when empty.
+
+The native helper requires a C++23 compiler (`gcc`), Make, `pkgconf`, and Hyprland
+headers matching the running compositor. On Omarchy these headers come with the
+Hyprland package. Install missing build tools with `omarchy pkg add base-devel`.
+See the update procedure below after changing Hyprland or the plugin.
 
 Choose the Hyprworld workspaces widget when prompted for bar placement. It can
 replace the normal workspace widget through Omarchy's bar configuration.
@@ -75,28 +88,43 @@ replace the normal workspace widget through Omarchy's bar configuration.
 | Pan camera | Super+middle mouse drag |
 | Move or group with pointer | Super+left mouse drag |
 | Toggle overview | Super+O |
+| Focus with touchpad | Three-finger swipe in any direction |
+| Continuous zoom with touchpad | Two-finger pinch / spread |
+| Previous / next workspace with touchpad | Four-finger swipe left / right |
+| Toggle overview with touchpad | Four-finger swipe up / down |
 | Open settings | Super+Shift+L |
-| Select local workspace 1–5 | Super+1–5 |
-| Move window to local workspace and follow | Super+Shift+1–5 |
-| Move window without following | Super+Shift+Alt+1–5 |
-| Previous / next local workspace | Super+Ctrl+Left / Right |
+| Select workspace 1–10 | Super+1–0 |
+| Move window to workspace and follow | Super+Shift+1–0 |
+| Move window without following | Super+Shift+Alt+1–0 |
+| Previous / next workspace | Super+Ctrl+Left / Right |
 | Previous workspace on this monitor | Super+Ctrl+Tab |
 | Next / previous monitor | Super+Tab / Super+Shift+Tab |
 
 Workspace number bindings use physical number-row keycodes. Workspace stepping
-stops at the ends of each monitor's bank. Number-row shortcuts for 6–0 and the
-stock whole-workspace monitor movement shortcuts are unbound while enabled.
+stops at 1 in the left direction and keeps creating workspaces to the right.
+The minimap and overview are hidden while screensaver windows are present.
+The minimap also hides while any window is fullscreen.
 Some other Omarchy shortcuts are replaced too; inspect the Shortcuts tab and
 `integration/omarchy.lua` before adapting an existing custom keymap. Outside the
 layout, only actions with an explicit fallback retain their normal behavior.
 
+The old split/pseudo, saved-width, and minus/equal resize shortcuts are removed.
+Native tab-group shortcuts remain available. Touchpad callbacks use Hyprland's
+[Lua gesture API](https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/).
+
 ### Groups and overview
 
-Dropping a window onto another creates or extends a group. Two windows share
-halves, three use one half and two quarters, and four use quarters. A full
+Dropping a window onto another creates or extends a group. By default, two windows share
+halves, three use one half and two quarters, and four use quarters. Settings can
+replace these arrangements with rows, columns, grid, or master layouts. A full
 four-window destination swaps complete cells. These groups are visible tiles,
 not native Hyprland tab groups. Moving a member outward detaches it; moving
 within a group swaps member positions. Dragging across monitors cancels the gesture.
+
+Overview displays the current workspace number. Type in the search field to fuzzy
+match windows across workspaces using titles, application names, and all metadata
+exposed by Hyprland (including initial titles, workspace, PID, and tags). Up/Down
+select results, Enter activates one, and Escape clears the search before closing.
 
 In overview, arrows select, Shift+arrows move/group, Alt+arrows resize, and
 left-drag moves cards. Super+middle-drag pans. The configured workspace shortcuts
@@ -106,48 +134,68 @@ to close it.
 
 ## Settings
 
-Open settings with **Super+Shift+L**. **Apply** or **Ctrl+S** saves the draft;
-**Revert** discards it. Closing the panel preserves unsaved edits until the shell
-restarts. Sections can restore defaults.
+Open **Super+Shift+L** for settings. The icon sidebar contains
+Minimap, Overview, Flow, Placement paths, Group layouts, Startup workspaces,
+Shortcuts, and Plugin. Search across controls, expand advanced options, and preview
+changes before **Apply**. **Revert** discards the draft; section defaults are also
+kept in the draft until applied.
 
-- **Minimap:** enable, corner, insets, maximum dimensions, opacity, and outline weight.
-- **Overview:** animation duration, wallpaper, and card opacity.
-- **Mouse/workflow:** hover or click focus, hover cooldown, connected layout, and compaction delay.
-- **Shortcuts:** edit the 19 layout/settings actions; validation checks key names,
-  keycodes, duplicate actions, and active binding conflicts.
-- **Plugin:** disable/re-enable and refresh the shell. The settings controller
-  remains accessible when the layout is disabled through this panel.
+Minimap and overview include visibility, geometry, labels, colors and animation
+controls. Flow contains compaction, focus, geometry and touchpad sensitivity.
+Placement paths can open windows horizontally, vertically, or along custom ordered
+branches with grouped tiles. Select **Custom**, click a tile, then click one of its
+neighboring **+** buttons. Arrow keys do the same when the canvas is focused. Use
+**All workspaces** or enter specific workspace numbers. Group size controls how
+many windows fill each tile before the next one. Changes affect newly placed windows.
+Group layouts can be configured separately for two,
+three or four windows, including master-left, master-right and master-top with draggable splits.
 
-Settings are stored in `~/.config/omarchy/hyprworld.json`. Appearance and mouse
-changes apply without a compositor reload; shortcut changes reload Hyprland.
-Disabling/re-enabling also changes the workspace layout and refreshes the shell.
-**Hyprland reloads reset in-memory window groups and camera/layout state.**
+Startup templates save workspace/monitor, app classes and commands, positions,
+groups, and zoom. Capture an existing tiled workspace, supply launch commands, and
+launch it manually or enable it for startup. Existing matching windows are reused.
+Automatic startup is off by default and runs at most once per compositor session.
+Use one template per destination workspace: saved template geometry applies when
+matching windows enter that workspace, even when automatic launching is off.
+Blank launch commands reuse existing windows only; missing apps need a command.
+Capturing selects the new template for editing. A disconnected preferred monitor
+falls back to normal workspace assignment.
 
-Advanced geometry defaults live in [layout/config.lua](layout/config.lua): edge
-peeks, gaps, width/height presets, initial dimensions, and zoom presets. Reload
-Hyprland after editing. Keep a copy of custom changes before updating the plugin.
+Shortcuts have fuzzy search, a customized filter, individual defaults and conflict
+checks. **Capture** records a physical key while showing its readable name. Press
+Escape to cancel. **Check conflicts** outlines every affected field in red;
+Apply also validates bindings before saving. Settings live in `~/.config/omarchy/hyprworld.json`. Appearance and Flow
+changes apply live; shortcut/plugin-enable changes reload Hyprland and reset
+in-memory layout groups.
 
-An optional custom launcher can receive Up/Down navigation by setting
-`HYPRWORLD_LAUNCHER_IPC` in Hyprland's environment to its shell IPC target. It must
-implement `moveSelected` and return `handled` when it consumes navigation.
-No personal launcher is required by default.
+See [the settings reference](docs/SETTINGS-OVERHAUL.md) for implemented controls,
+design decisions, limitations and the remaining advanced proposals.
 
 ## Update, disable, or uninstall
 
 ```sh
 omarchy plugin update io.github.tdemers218.hyprworld
+make -C ~/.config/omarchy/plugins/io.github.tdemers218.hyprworld native
+hyprctl plugin unload ~/.config/omarchy/plugins/io.github.tdemers218.hyprworld/native/build/shared-workspaces.so
+hyprctl reload
+hyprctl configerrors
 ```
+
+Unloading the old native helper before reloading activates the rebuilt binary.
+If it was not loaded, skip the unload error and continue. After a Hyprland package
+upgrade, restart the compositor into the new version before loading a newly built
+helper; headers and running compositor must match.
 
 For a temporary pause, disable it in its settings panel; use the same shortcut
 to re-enable. To remove the plugin:
 
 ```sh
+hyprctl plugin unload ~/.config/omarchy/plugins/io.github.tdemers218.hyprworld/native/build/shared-workspaces.so
 omarchy plugin remove io.github.tdemers218.hyprworld --yes
 hyprctl reload
 hyprctl configerrors
 ```
 
-Preferences and saved monitor order remain in `~/.config/omarchy/` so they can be
+Preferences remain in `~/.config/omarchy/` so they can be
 reused. Removing the shell plugin makes its settings shortcut unavailable.
 
 ## Troubleshooting
@@ -161,9 +209,11 @@ reused. Removing the shell plugin makes its settings shortcut unavailable.
 - **Layout loads but no settings/overview:** use the full Omarchy shell plugin;
   the config installer loads only the Lua integration.
 
-Fullscreen, native Hyprland groups, cross-monitor moves, special workspaces, and
-mixed monitor setups need further live testing. Automated checks use compositor
-mocks; they do not establish compatibility with your compositor release.
+Automated regressions cover the layout and settings logic. Isolated compositor
+checks cover actual window placement, workspace swaps in multiple monitor
+arrangements, overlays, settings editing, and startup launching. Compatibility
+outside the version above is unverified. Groups remain limited to four windows;
+there are no live window thumbnails or complete session restoration.
 
 Report fork-specific problems in **this repository's Issues tab** with versions,
 monitor geometry, reproduction steps, and relevant configuration errors.

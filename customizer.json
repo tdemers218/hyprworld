@@ -1,10 +1,1 @@
-{
-  "minimap": { "x": 12, "y": 52, "opacity": 0.72 },
-  "overview": { "animationMs": 360, "wallpaper": true },
-  "shortcuts": {
-    "overview": "SUPER + O",
-    "zoomIn": "SUPER + CTRL + UP",
-    "zoomOut": "SUPER + CTRL + DOWN"
-  },
-  "workflow": { "mouseCooldownMs": 550, "clickCards": true }
-}
+{}

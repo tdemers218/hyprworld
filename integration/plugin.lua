@@ -22,7 +22,17 @@ if not root_dir then error("hyprworld: invalid plugin directory") end
 
 local preferences_module = dofile(root_dir .. "/layout/preferences.lua")
 _G.__hyprworld_enabled = preferences_module.enabled()
-if _G.__hyprworld_enabled then dofile(root_dir .. "/layout/init.lua") end
+if _G.__hyprworld_enabled then
+    local helper=root_dir .. "/native/build/shared-workspaces.so"
+    local binary=io.open(helper,"rb")
+    if not binary then error("Hyprworld native helper is missing. Run: make -C " .. root_dir .. " native; then hyprctl reload") end
+    binary:close()
+    if not hl.plugin.hyprworld_shared then error("Hyprworld native helper is not loaded. Start the Omarchy shell service or run bootstrap.py.") end
+    if hl.plugin.hyprworld_shared and hl.plugin.hyprworld_shared.set_enabled then hl.plugin.hyprworld_shared.set_enabled(true) end
+    dofile(root_dir .. "/layout/init.lua")
+elseif hl.plugin.hyprworld_shared and hl.plugin.hyprworld_shared.set_enabled then
+    hl.plugin.hyprworld_shared.set_enabled(false)
+end
 dofile(root_dir .. "/integration/omarchy.lua")
 
 _G.__hyprworld_plugin_loaded = true
