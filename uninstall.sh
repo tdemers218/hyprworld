@@ -4,7 +4,18 @@ set -eu
 
 start_marker="-- hyprworld:start"
 end_marker="-- hyprworld:end"
+yes_flag=0
 config_file="${HYPRWORLD_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
+
+for argument in "$@"; do
+  case "$argument" in
+    --yes) yes_flag=1 ;;
+    *)
+      printf 'Usage: %s [--yes]\n' "$0" >&2
+      exit 1
+      ;;
+  esac
+done
 
 if [ ! -f "$config_file" ]; then
   printf 'Error: Hyprland config not found at %s\n' "$config_file" >&2
@@ -14,6 +25,19 @@ fi
 if ! grep -Fq -- "$start_marker" "$config_file"; then
   printf 'Hyprworld is not installed in %s\n' "$config_file"
   exit 0
+fi
+
+if [ "$yes_flag" -ne 1 ]; then
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    printf 'Error: removal changes %s; rerun with --yes from an explicit approval.\n' "$config_file" >&2
+    exit 1
+  fi
+  printf 'Hyprworld will remove its marked integration block from %s and reload Hyprland. Continue? [y/N] ' "$config_file"
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) printf 'Removal cancelled; no changes were made.\n'; exit 0 ;;
+  esac
 fi
 
 timestamp="$(date +%Y%m%d%H%M%S)"

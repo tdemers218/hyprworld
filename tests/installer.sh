@@ -11,7 +11,7 @@ printf '%s\n' 'require("default.hypr.omarchy")' > "$config_file"
 
 HYPRWORLD_HYPRLAND_CONFIG="$config_file" \
 HYPRWORLD_SKIP_RELOAD=1 HYPRWORLD_SKIP_NATIVE_BUILD=1 \
-  "$repo_dir/install.sh" 7 >/dev/null
+  "$repo_dir/install.sh" --yes 7 >/dev/null
 
 grep -Fq -- '-- hyprworld:start' "$config_file"
 grep -Fq -- 'workspace = "7", layout = "lua:hyprworld"' "$config_file"
@@ -21,7 +21,7 @@ grep -Fq -- 'hl.plugin.load(hyprworld .. "/native/build/shared-workspaces.so")' 
 
 HYPRWORLD_HYPRLAND_CONFIG="$config_file" \
 HYPRWORLD_SKIP_RELOAD=1 HYPRWORLD_SKIP_NATIVE_BUILD=1 \
-  "$repo_dir/uninstall.sh" >/dev/null
+  "$repo_dir/uninstall.sh" --yes >/dev/null
 
 if grep -Fq -- '-- hyprworld:start' "$config_file"; then
   printf 'installer test failed: marker survived uninstall\n' >&2

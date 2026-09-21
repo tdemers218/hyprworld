@@ -4,7 +4,37 @@ set -eu
 
 start_marker="-- hyprworld:start"
 end_marker="-- hyprworld:end"
-workspace="${1:-9}"
+yes_flag=0
+workspace="9"
+workspace_set=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --yes) yes_flag=1 ;;
+    --)
+      shift
+      if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$workspace_set" -eq 1 ]; }; then
+        printf 'Usage: %s [--yes] [workspace]\n' "$0" >&2
+        exit 1
+      fi
+      if [ "$#" -eq 1 ]; then workspace="$1"; workspace_set=1; fi
+      break
+      ;;
+    ''|*[!0-9]*)
+      printf 'Usage: %s [--yes] [workspace]\n' "$0" >&2
+      exit 1
+      ;;
+    *)
+      if [ "$workspace_set" -eq 1 ]; then
+        printf 'Usage: %s [--yes] [workspace]\n' "$0" >&2
+        exit 1
+      fi
+      workspace="$1"
+      workspace_set=1
+      ;;
+  esac
+  shift
+done
 config_file="${HYPRWORLD_HYPRLAND_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
@@ -19,6 +49,20 @@ if [ "$workspace" -lt 1 ]; then
   printf 'Error: workspace must be a positive number.\n' >&2
   exit 1
 fi
+
+confirm() {
+  if [ "$yes_flag" -eq 1 ]; then return 0; fi
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    printf 'Error: installation changes %s; rerun with --yes from an explicit approval.\n' "$config_file" >&2
+    exit 1
+  fi
+  printf 'Hyprworld will append its marked integration block to %s and reload Hyprland. Continue? [y/N] ' "$config_file"
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) printf 'Installation cancelled; no changes were made.\n'; exit 0 ;;
+  esac
+}
 
 if [ ! -f "$config_file" ]; then
   printf 'Error: Omarchy Hyprland config not found at %s\n' "$config_file" >&2
@@ -41,6 +85,8 @@ if grep -q 'hyprworld/layout/init.lua' "$config_file"; then
   printf 'Remove the old Hyprworld lines before running this installer.\n' >&2
   exit 1
 fi
+
+confirm
 
 case "$repo_dir" in
   *$'\n'*|*$'\r'*)

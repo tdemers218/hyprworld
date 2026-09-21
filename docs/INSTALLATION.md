@@ -14,6 +14,13 @@ git clone https://github.com/tdemers218/hyprworld.git ~/.local/share/hyprworld
 ~/.local/share/hyprworld/install.sh
 ```
 
+The installer asks before changing `hyprland.lua`. For an explicitly approved
+scripted install, pass `--yes`:
+
+```sh
+~/.local/share/hyprworld/install.sh --yes
+```
+
 The script requires the Omarchy Lua configuration. It backs up `hyprland.lua`,
 adds a marked block, validates syntax when `luac` is available, and reloads a
 running Hyprland instance. If there were no errors before and the reload adds
@@ -48,6 +55,9 @@ Uninstall using the script before deleting or moving the checkout:
 hyprctl plugin unload ~/.local/share/hyprworld/native/build/shared-workspaces.so
 ~/.local/share/hyprworld/uninstall.sh
 ```
+
+Removal also asks for confirmation; use `--yes` only when the removal has been
+explicitly approved in advance.
 
 It backs up the configuration and removes the marked block. The checkout and
 preferences remain available for recovery. For an alternate config file use
