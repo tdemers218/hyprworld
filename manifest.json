@@ -8,7 +8,7 @@
   "description": "A two-dimensional workspace with window groups, searchable overview, minimap, touchpad navigation, and customizable placement paths.",
   "kinds": [
     "service",
-    "window manager"
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
