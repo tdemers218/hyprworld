@@ -5,7 +5,7 @@
   "version": "0.1.1",
   "author": "Tristan Demers",
   "license": "MIT",
-  "description": "A two-dimensional scrolling workspace for Hyprland on Omarchy. Pan and zoom a grid of windows, arrange up to four windows per tile, and search or rearrange them in an animated overview. Includes a configurable minimap with smooth fit resizing, continuous drag outlines within and across monitors, shared numbered workspaces with spatial monitor swaps, custom placement paths and group layouts, startup templates, and configurable keyboard and touchpad controls. Settled layout checkpoints restore open windows after plugin resets within the same compositor session. Requires Hyprland’s Lua layout API, Omarchy Shell, and a native helper built for the exact running Hyprland version.",
+  "description": "A two-dimensional scrolling workspace for Hyprland on Omarchy, with visible window groups, searchable overview, smooth-fit minimap, continuous cross-monitor drag outlines, shared workspaces, placement paths, startup templates, and keyboard/touchpad controls. Settled checkpoints restore layouts after plugin resets in the same compositor session. Requires the Hyprland Lua API, Omarchy Shell, and a native helper built for the running Hyprland version.",
   "kinds": [
     "service",
     "bar-widget"
