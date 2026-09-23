@@ -7,6 +7,9 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import "Settings.js" as Settings
 import "Search.js" as Search
+import "MinimapLayout.js" as MinimapLayout
+import "OverviewMotion.js" as OverviewMotion
+import "PreviewStream.js" as PreviewStream
 
 Item {
     id: root
@@ -14,11 +17,18 @@ Item {
     OverlayState { id: overlayState }
     property string searchQuery: ""
     property int searchIndex: 0
+    property var ipcWindows: []
     readonly property var searchWindows: {
         var windows = [], seen = {}
         Hyprland.toplevels.values.forEach(function(t) {
             var data = t.lastIpcObject || {}
             if (!data.address) return
+            var copy = Object.assign({}, data)
+            copy.application = root.app(data).name
+            windows.push(copy); seen[data.address] = true
+        })
+        ipcWindows.forEach(function(data) {
+            if (!data.address || seen[data.address]) return
             var copy = Object.assign({}, data)
             copy.application = root.app(data).name
             windows.push(copy); seen[data.address] = true
@@ -35,26 +45,42 @@ Item {
     }))
     onSearchQueryChanged: searchIndex = 0
     onSearchResultsChanged: searchIndex = Math.max(0, Math.min(searchIndex, searchResults.length-1))
-    onOverviewChanged: if (!overview) searchQuery = ""
+    onOverviewChanged: {
+        if (!overview) searchQuery = ""
+        else if (!clientsReader.running) clientsReader.running = true
+    }
     function selectSearchResult(index) {
         var w = searchResults[index]
         if (!w || !/^0x[0-9a-f]+$/i.test(w.address)) return
         var ws = Number(w.workspace && w.workspace.id)
+        var workspaceName = String((w.workspace && w.workspace.name) || "")
         var code = "__hyprworld_set_overview(false); "
-        if (ws > 0 && Number.isInteger(ws)) code += "__hyprworld_workspace_nav.select(" + ws + "); "
+        var special = workspaceName.match(/^special:([A-Za-z0-9_.-]+)$/)
+        if (special) code += "hl.dispatch(hl.dsp.workspace.toggle_special(" + JSON.stringify(special[1]) + ")); "
+        else if (ws > 0 && Number.isInteger(ws)) code += "__hyprworld_workspace_nav.select(" + ws + "); "
         code += 'hl.dispatch(hl.dsp.focus({window="address:' + w.address + '"}))'
-        Quickshell.execDetached(["hyprctl", "eval", code])
+        Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl", "eval", code])
     }
     property bool pushAvailable: false
+    property var previewStream: ({})
+    property var dragStream: ({})
+    property var gestureFrame: ({})
+    function acceptGesture(next) {
+        if (next.epoch && next.epoch === gestureFrame.epoch && next.revision <= gestureFrame.revision) return
+        gestureFrame = {epoch:next.epoch, revision:next.revision, gesture:next.gesture,
+            monitor:next.monitor, monitorX:next.monitorX, monitorY:next.monitorY}
+    }
     property bool compactAnimating: false
     Timer { id: compactAnimation; interval: 320; onTriggered: root.compactAnimating=false }
     signal changingSnapshot(var next)
     ListModel { id: tileModel; dynamicRoles: true }
     function acceptSnapshot(next) {
         if (next.epoch && next.epoch===snapshot.epoch && next.revision<=snapshot.revision) return
+        acceptGesture(next)
         if (next.workspaceId===snapshot.workspaceId && next.epoch===snapshot.epoch && (next.compactSerial || 0)!==(snapshot.compactSerial || 0)) {
             compactAnimating=true; compactAnimation.restart()
         }
+        locallyDismissed = false
         changingSnapshot(next)
         var tiles=Array.isArray(next.tiles) ? next.tiles : []
         var wanted={}
@@ -88,12 +114,13 @@ Item {
                         return true
     }
     function switchWorkspace(direction) {
-        Quickshell.execDetached(["hyprctl","eval","if __hyprworld_workspace_nav then __hyprworld_workspace_nav.step("+direction+") end"])
+        Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl","eval","if __hyprworld_workspace_nav then __hyprworld_workspace_nav.step("+direction+") end"])
     }
-    readonly property var gesture: snapshot.gesture || ({})
+    readonly property var gesture: gestureFrame.gesture || ({})
     readonly property bool gesturing: !!gesture.mode
     readonly property var tiles: Array.isArray(snapshot.tiles) ? snapshot.tiles : []
-    readonly property bool overview: preferences.plugin.enabled && snapshot.overview === true
+    property bool locallyDismissed: false
+    readonly property bool overview: !locallyDismissed && preferences.plugin.enabled && snapshot.overview === true
     readonly property string commitAddress: snapshot.commitAddress || ""
     readonly property bool hasGroups: tiles.some(function(tile) { return tile.part && tile.part.count > 1 })
     onCommitAddressChanged: if (commitAddress && !overview) commitTimer.restart()
@@ -102,8 +129,16 @@ Item {
     Timer { id: commitTimer; interval: root.overviewDuration + 20; onTriggered: if (root.commitAddress && !root.overview) root.command("overview-commit " + root.commitAddress) }
     readonly property bool minimap: preferences.plugin.enabled && preferences.minimap.enabled && (!preferences.minimap.hideFullscreen || !overlayState.fullscreenActive) && tiles.length > (preferences.minimap.hideSingle ? 1 : 0) && !overview && (!preferences.minimap.hideMaxZoom || snapshot.zoom < snapshot.maxZoom)
     property real minimapProgress: minimap ? 1 : 0
-    Behavior on minimapProgress { NumberAnimation { duration: root.preferences.minimap.fadeMs } }
-    readonly property int overviewDuration: preferences.overview.reducedMotion ? 0 : preferences.overview.animationMs
+    readonly property bool animationsEnabled: preferences.effects.animations
+    readonly property bool overviewAnimations: animationsEnabled && !preferences.overview.reducedMotion
+    Behavior on minimapProgress { NumberAnimation { duration: root.animationsEnabled ? root.preferences.minimap.fadeMs : 0 } }
+    readonly property int overviewDuration: overviewAnimations ? preferences.overview.animationMs : 0
+    onAnimationsEnabledChanged: effectsTimer.restart()
+    Timer { id:effectsTimer; interval:100; onTriggered: effectsSync.running=true }
+    Process {
+        id:effectsSync
+        command:["timeout", "--kill-after=1s", "5s", "hyprctl","eval","if __hyprworld_apply_effects then __hyprworld_apply_effects("+(root.animationsEnabled ? "true" : "false")+") end"]
+    }
     readonly property int overviewEasing: preferences.overview.easing==="linear" ? Easing.Linear : preferences.overview.easing==="in-out-cubic" ? Easing.InOutCubic : Easing.OutCubic
     property bool pending: false
     property real overviewProgress: overview ? 1 : 0
@@ -126,13 +161,18 @@ Item {
     }
     Timer { interval: 1500; running: true; repeat: true; triggeredOnStart: true; onTriggered: if (!wallpaperReader.running) wallpaperReader.running = true }
 
-    function refresh() {
+    function refresh(recovery) {
+        // Drag frames arrive through custom events. Suppress event-triggered
+        // queries during gestures while allowing the low-rate recovery timer.
+        if (root.gesturing && !recovery) return
         if (reader.running) { pending = true; return }
         reader.running = true
     }
     function command(message) {
+        // Always relinquish exclusive keyboard focus even when compositor IPC fails.
+        if (message === "overview-close") locallyDismissed = true
         if (message === "overview-close" && tiles.length === 0) {
-            Quickshell.execDetached(["hyprctl","eval","if __hyprworld_set_overview then __hyprworld_set_overview(false) end"])
+            Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl","eval","if __hyprworld_set_overview then __hyprworld_set_overview(false) end"])
             refreshTimer.restart(); return
         }
         Hyprland.dispatch("hl.dsp.layout(" + JSON.stringify(message) + ")")
@@ -180,7 +220,7 @@ Item {
     readonly property real mapScale: Math.min(preferences.minimap.width / mapBounds.w, preferences.minimap.height / mapBounds.h)
     MinimapMotion {
         id: minimapMotion
-        duration: root.preferences.minimap.motionMs
+        duration: root.animationsEnabled && !root.transitioning && root.minimap ? root.preferences.minimap.motionMs : 0
         workspace: root.snapshot.monitor + ":" + root.snapshot.workspaceId
         targetFrame: {
             var rects={}
@@ -196,13 +236,25 @@ Item {
     readonly property real mapWidth: minimapMotion.frame.width
     readonly property real mapHeight: minimapMotion.frame.height
     Timer { id: refreshTimer; interval: 35; onTriggered: root.refresh() }
-    Timer { interval: root.gesturing ? 32 : root.pushAvailable ? 2000 : 400; repeat: true; running: true; triggeredOnStart: true; onTriggered: root.refresh() }
+    // Once the event bridge is live, this is only a low-rate recovery poll.
+    // Keep recovery polling even during a gesture: a lost release event must
+    // not leave the preview permanently stuck. Ordinary drag events never poll.
+    Timer { interval: root.pushAvailable || root.gesturing ? 2000 : 400; repeat: true; running: true; triggeredOnStart: true; onTriggered: root.refresh(true) }
     Connections {
         target: Hyprland
         function onRawEvent(event) {
-            if (event.name === "custom" && event.data.startsWith("hyprworld-preview,")) {
+            if (event.name === "custom" && (event.data.startsWith("hyprworld-drag,") || event.data.startsWith("hyprworld-drag-part,"))) {
                 try {
-                    root.acceptSnapshot(JSON.parse(event.data.slice("hyprworld-preview,".length)))
+                    var frame = PreviewStream.accept(root.dragStream, event.data, "drag")
+                    if (frame !== null) { root.acceptGesture(JSON.parse(frame)); root.pushAvailable = true }
+                } catch (e) { /* The bounded recovery poll repairs a lost frame. */ }
+                return
+            }
+            if (event.name === "custom" && (event.data.startsWith("hyprworld-preview,") || event.data.startsWith("hyprworld-preview-part,"))) {
+                try {
+                    var payload = PreviewStream.accept(root.previewStream, event.data)
+                    if (payload === null) return
+                    root.acceptSnapshot(JSON.parse(payload))
                     root.pushAvailable=true
                     refreshTimer.stop()
                     root.pending=false
@@ -216,13 +268,86 @@ Item {
     }
     Process {
         id: reader
-        command: ["hyprctl", "repl", "return __hyprworld_preview and __hyprworld_preview() or '{}' "]
+        command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "repl", "return __hyprworld_preview and __hyprworld_preview() or '{}' "]
         stdout: StdioCollector {
             onStreamFinished: {
                 try { root.acceptSnapshot(JSON.parse(text.trim())) } catch (e) { /* Keep the last valid frame. */ }
             }
         }
         onRunningChanged: if (!running && root.pending) { root.pending = false; refreshTimer.restart() }
+    }
+    Process {
+        id: clientsReader
+        command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "-j", "clients"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { root.ipcWindows = JSON.parse(text.trim()) } catch (e) { root.ipcWindows = [] }
+            }
+        }
+    }
+    Timer { interval: 750; repeat: true; running: root.overview; onTriggered: if (!clientsReader.running) clientsReader.running = true }
+    // The same click-through surface draws local and cross-monitor drag hints.
+    // Its geometry stream is independent of the minimap's full workspace model.
+    Variants {
+        model: Quickshell.screens
+        delegate: Component {
+            PanelWindow {
+                id: transferPanel
+                required property var modelData
+                readonly property var drop: root.gesture.drop || ({})
+                readonly property var box: root.gesture.ghost || ({x:0,y:0,w:0,h:0})
+                readonly property bool sourceMonitor: root.gestureFrame.monitor === modelData.name
+                readonly property real originX: sourceMonitor ? (root.gestureFrame.monitorX || 0) : (drop.monitorX || 0)
+                readonly property real originY: sourceMonitor ? (root.gestureFrame.monitorY || 0) : (drop.monitorY || 0)
+                screen: modelData
+                visible: !overlayState.screensaverActive && root.gesture.mode === "move" && !!root.gesture.ghost && (sourceMonitor || drop.monitor === modelData.name)
+                anchors { top: true; left: true; right: true; bottom: true }
+                color: "transparent"
+                exclusionMode: ExclusionMode.Ignore
+                WlrLayershell.namespace: "hyprworld-transfer-preview"
+                WlrLayershell.layer: WlrLayer.Overlay
+                WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+                mask: Region {}
+                Rectangle {
+                    id: transferOutline
+                    x: transferPanel.box.x-transferPanel.originX
+                    y: transferPanel.box.y-transferPanel.originY
+                    width: transferPanel.box.w; height: transferPanel.box.h; radius: 10
+                    color: Util.alpha(Color.accent, transferPanel.sourceMonitor ? 0.08 : 0.12)
+                    border.color: Color.accent; border.width: transferPanel.sourceMonitor ? 2 : 3
+                }
+                Rectangle {
+                    visible: !transferPanel.sourceMonitor
+                    x: Math.max(12, Math.min(transferOutline.x+(transferOutline.width-width)/2, transferPanel.width-width-12))
+                    y: Math.max(12, Math.min(transferOutline.y+20, transferPanel.height-height-12))
+                    width: Math.min(transferLabel.implicitWidth+28, transferPanel.width-24)
+                    height: 38; radius: 8
+                    color: Color.background; border.color: Color.accent; border.width: 1
+                    Text {
+                        id: transferLabel
+                        anchors.fill: parent; anchors.margins: 8
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: transferPanel.drop.label || ""
+                        elide: Text.ElideRight
+                        color: Color.foreground; font.pixelSize: 14; font.bold: true
+                    }
+                }
+                Rectangle {
+                    readonly property var box: transferPanel.drop.box || ({x:0,y:0,w:0,h:0})
+                    visible: transferPanel.sourceMonitor && !!transferPanel.drop.box
+                    x: box.x-transferPanel.originX; y: box.y-transferPanel.originY
+                    width: box.w; height: box.h; radius: 10
+                    color: Util.alpha(Color.accent, 0.18)
+                    border.color: Color.accent; border.width: 3
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: dropLabel.implicitWidth+28; height: 38; radius: 8
+                        color: Color.background; border.color: Color.accent; border.width: 1
+                        Text { id: dropLabel; anchors.centerIn: parent; text: transferPanel.drop.label || ""; color: Color.foreground; font.pixelSize: 14; font.bold: true }
+                    }
+                }
+            }
+        }
     }
     Variants {
         model: Quickshell.screens
@@ -233,17 +358,32 @@ Item {
                 property real workspaceSlide: 0
                 property real slideDirection: 1
                 property real slideDirectionY: 0
-                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.preferences.overview.reducedMotion ? 0 : root.preferences.overview.switchMs; easing.type: root.overviewEasing; onFinished: panel.outgoing=[] }
+                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.overviewAnimations ? root.preferences.overview.switchMs : 0; easing.type: root.overviewEasing; onFinished: panel.outgoing=[] }
+                Connections {
+                    target:root
+                    function onOverviewAnimationsChanged() {
+                        if (!root.overviewAnimations) { slideAnimation.stop(); panel.workspaceSlide=0; panel.outgoing=[] }
+                    }
+                }
                 Connections {
                     target: root
                     function onChangingSnapshot(next) {
                         if (!root.overview || !next.overview || next.monitor!==panel.modelData.name || root.snapshot.monitor!==next.monitor || next.workspaceId===root.snapshot.workspaceId) return
+                        if (!root.overviewAnimations || root.preferences.overview.switchMs<=0) {
+                            slideAnimation.stop(); panel.workspaceSlide=0; panel.outgoing=[]; return
+                        }
                         var previous=[]
+                        var outgoingData={}
+                        root.tiles.forEach(function(data) { outgoingData[data.address]=data })
                         for (var i=0;i<currentTiles.count;i++) {
                             var item=currentTiles.itemAt(i)
-                            if (item) previous.push({data:JSON.parse(JSON.stringify(root.tiles.find(function(t) { return t.address===item.modelData.address }) || {})),
+                            // Tile data is replaced, not mutated. Retain it and the
+                            // resolved app directly instead of O(n²) lookup + JSON copies.
+                            if (item) previous.push({data:outgoingData[item.modelData.address] || {},application:item.application,
                                 x:canvas.x+item.x,y:canvas.y+item.y,w:item.width,h:item.height})
                         }
+                        previous=OverviewMotion.outgoing(previous,panel.outgoing,panel.workspaceSlide,
+                            panel.slideDirection*panel.width,panel.slideDirectionY*panel.height)
                         slideAnimation.stop()
                         panel.outgoing=previous
                         panel.slideDirection=next.slideDirection === undefined ? (next.workspaceId>root.snapshot.workspaceId ? 1 : -1) : next.slideDirection
@@ -253,6 +393,28 @@ Item {
                     }
                 }
                 required property var modelData
+                // Layout snapshots are authoritative. IPC focus and geometry arrive
+                // separately, so mixing them briefly fits around the outgoing tile.
+                property var focusedBox: null
+                property string fitWorkspace: ""
+                function updateFocusedBox() {
+                    var tile = root.tiles.find(function(t) { return t.active && t.box })
+                    if (!tile) return // Keep the last valid size during focus transitions.
+                    var next = {x:tile.box.x-(root.snapshot.monitorX || 0),
+                        y:tile.box.y-(root.snapshot.monitorY || 0),w:tile.box.w,h:tile.box.h}
+                    var workspace = root.snapshot.monitor + ":" + root.snapshot.workspaceId
+                    var stable = MinimapLayout.stableObstacle(focusedBox, next, workspace === fitWorkspace)
+                    fitWorkspace = workspace
+                    if (stable !== focusedBox) focusedBox = stable
+                }
+                Connections { target: root; function onSnapshotChanged() { panel.updateFocusedBox() } }
+                Component.onCompleted: updateFocusedBox()
+                MinimapFitMotion {
+                    id: fitMotion
+                    targetFrame: MinimapLayout.fit(root.mapWidth, root.mapHeight, panel.width, panel.height, root.preferences.minimap, panel.focusedBox)
+                    duration: root.animationsEnabled && root.minimap && !root.transitioning && root.preferences.minimap.placementMode === "fit" ? root.preferences.minimap.motionMs : 0
+                }
+                readonly property var mapFit: fitMotion.frame
                 screen: modelData
                 visible: !overlayState.screensaverActive && (!root.preferences.minimap.hideFullscreen || !overlayState.fullscreenActive || root.overview) && (root.transitioning || root.minimapProgress>0.001 || root.gesturing) && root.snapshot.monitor === modelData.name
                 anchors { top: true; left: true; right: true; bottom: true }
@@ -261,32 +423,7 @@ Item {
                 WlrLayershell.namespace: "hyprworld-preview"
                 WlrLayershell.layer: WlrLayer.Overlay
                 WlrLayershell.keyboardFocus: root.overview ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-                mask: Region { item: root.overview ? background : root.preferences.minimap.interactive && root.minimap ? canvas : null }
-                // Click-through hints: these never take input away from the compositor drag.
-                Rectangle {
-                    readonly property var box: root.gesture.ghost || ({x:0,y:0,w:0,h:0})
-                    visible: !!root.gesture.ghost
-                    x: box.x-(root.snapshot.monitorX || 0); y: box.y-(root.snapshot.monitorY || 0)
-                    width: box.w; height: box.h; radius: 10
-                    color: Util.alpha(Color.accent, 0.08)
-                    border.color: Color.accent; border.width: 2
-                }
-                Rectangle {
-                    id: dropHint
-                    readonly property var drop: root.gesture.drop || ({})
-                    readonly property var box: drop.box || ({x:0,y:0,w:0,h:0})
-                    visible: !!drop.box
-                    x: box.x-(root.snapshot.monitorX || 0); y: box.y-(root.snapshot.monitorY || 0)
-                    width: box.w; height: box.h; radius: 10
-                    color: Util.alpha(Color.accent, 0.18)
-                    border.color: Color.accent; border.width: 3
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: dropLabel.implicitWidth+28; height: 38; radius: 8
-                        color: Color.background; border.color: Color.accent; border.width: 1
-                        Text { id: dropLabel; anchors.centerIn: parent; text: dropHint.drop.label || ""; color: Color.foreground; font.pixelSize: 14; font.bold: true }
-                    }
-                }
+                mask: Region { item: root.overview ? background : root.preferences.minimap.interactive && root.minimap && panel.mapFit.visible ? canvas : null }
                 Rectangle {
                     id: background
                     anchors.fill: parent
@@ -383,17 +520,17 @@ Item {
                         id: canvas
                         opacity: root.overview ? 1-panel.workspaceSlide : root.transitioning ? 1 : root.minimapProgress
                         transform: Translate { x: root.overview ? panel.slideDirection*panel.width*panel.workspaceSlide : 0; y: root.overview ? panel.slideDirectionY*panel.height*panel.workspaceSlide : 0 }
-                        visible: (root.transitioning || root.minimapProgress>0.001) && !root.searchQuery.trim()
+                        visible: (root.transitioning || (root.minimapProgress>0.001 && panel.mapFit.visible)) && !root.searchQuery.trim()
                         property real panX: 0
                         property real panY: 0
-                        readonly property bool animateMinimap: root.minimap && !root.transitioning
+                        readonly property bool animateMinimap: root.animationsEnabled && root.minimap && !root.transitioning
                         // The minimap is sized from the actual grid extent, so
                         // a 2x1 layout stays compact while larger layouts grow
                         // until they reach the small corner footprint.
-                        x: root.transitioning ? 36 : root.preferences.minimap.corner.endsWith("right") ? parent.width-root.mapWidth-root.preferences.minimap.x : root.preferences.minimap.x
-                        y: root.transitioning ? 164 : root.preferences.minimap.corner.startsWith("bottom") ? parent.height-root.mapHeight-root.preferences.minimap.y : root.preferences.minimap.y
-                        width: root.transitioning ? parent.width-x*2 : root.mapWidth
-                        height: root.transitioning ? parent.height-y-36 : root.mapHeight
+                        x: root.transitioning ? 36 : panel.mapFit.x
+                        y: root.transitioning ? 164 : panel.mapFit.y
+                        width: root.transitioning ? parent.width-x*2 : panel.mapFit.w
+                        height: root.transitioning ? parent.height-y-36 : panel.mapFit.h
                         readonly property real cellW: root.transitioning
                             ? Math.min(root.hasGroups ? root.preferences.overview.groupWidth : root.preferences.overview.cardWidth, width / root.extent.cols)
                             : Math.min(24, width / root.extent.cols)
@@ -408,8 +545,8 @@ Item {
                                 y: originY + (data.row-root.extent.row+p.y)*cellH + root.preferences.overview.gap/2,
                                 w: Math.max(2, cellW*p.w-root.preferences.overview.gap), h: Math.max(2, cellH*p.h-root.preferences.overview.gap)}
                         }
-                        Rectangle { anchors.fill: parent; anchors.margins: -6; radius: 8; visible: !root.transitioning; color: Util.alpha(root.preferences.minimap.backgroundColor || Color.background,root.preferences.minimap.backgroundOpacity) }
-                        Text { visible: !root.transitioning && root.preferences.minimap.showWorkspace; y:-20; text:"Workspace "+root.snapshot.workspaceId;color:Color.foreground;font.pixelSize:11 }
+                        MinimapSurface { anchors.fill: parent; visible: !root.transitioning; preferences: root.preferences.minimap; effects:root.preferences.effects; wallpaper: root.wallpaper }
+                        Text { visible: !root.transitioning && root.preferences.minimap.showWorkspace; y:-20; width:parent.width; elide:Text.ElideRight; text:"Workspace "+root.snapshot.workspaceId;color:Color.foreground;font.pixelSize:11 }
                         Repeater {
                             id: currentTiles
                             model: tileModel
@@ -419,7 +556,7 @@ Item {
                                 readonly property var modelData: tileData
                                 property bool ready: false
                                 Component.onCompleted: ready=true
-                                readonly property bool animateGeometry: ready && root.overview && root.overviewProgress>0.999 && panel.workspaceSlide===0 && !dragArea.panning
+                                readonly property bool animateGeometry: root.overviewAnimations && ready && root.overview && root.overviewProgress>0.999 && panel.workspaceSlide===0 && !dragArea.panning
                                 Behavior on x { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
                                 Behavior on y { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
                                 Behavior on width { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
@@ -433,10 +570,10 @@ Item {
                                 readonly property var box: modelData.box || {x:0,y:0,w:targetW,h:targetH}
                                 readonly property real aspectRatio: Math.max(0.15, Math.min(8, Number(box.w) / Math.max(1, Number(box.h))))
                                 readonly property var miniRect: minimapMotion.frame.tiles[modelData.address] || {x:0,y:0,w:2,h:2}
-                                readonly property real miniX: miniRect.x
-                                readonly property real miniY: miniRect.y
-                                readonly property real miniW: miniRect.w
-                                readonly property real miniH: miniRect.h
+                                readonly property real miniX: Math.min(root.mapWidth, Math.max(0,miniRect.x)) * panel.mapFit.scale
+                                readonly property real miniY: Math.min(root.mapHeight, Math.max(0,miniRect.y)) * panel.mapFit.scale
+                                readonly property real miniW: Math.max(0,Math.min(miniRect.w*panel.mapFit.scale,panel.mapFit.w-miniX))
+                                readonly property real miniH: Math.max(0,Math.min(miniRect.h*panel.mapFit.scale,panel.mapFit.h-miniY))
                                 readonly property var area: root.snapshot.area || {x:0,y:0,w:panel.width,h:panel.height}
                                 readonly property real progress: root.transitioning ? root.overviewProgress : 1
                                 x: root.transitioning ? (box.x-(root.snapshot.monitorX || 0)-canvas.x)*(1-progress)+targetX*progress : miniX
@@ -560,10 +697,11 @@ Item {
                             model: panel.outgoing
                             Rectangle {
                                 required property var modelData
-                                readonly property var application: root.app(modelData.data)
-                                x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h; radius: 10
-                                color: Util.alpha(Color.background,root.preferences.overview.cardOpacity)
-                                border.color: modelData.data.active ? Color.accent : Util.alpha(Color.foreground,0.38)
+                                readonly property var application: modelData.application
+                                opacity: modelData.opacity
+                                x: modelData.x; y: modelData.y; width: modelData.w; height: modelData.h; radius: root.preferences.overview.radius
+                                color: Util.alpha(root.preferences.overview.backgroundColor || Color.background,root.preferences.overview.cardOpacity)
+                                border.color: modelData.data.active ? root.preferences.overview.activeColor || Color.accent : root.preferences.minimap.borderColor || Util.alpha(Color.foreground,0.38)
                                 border.width: modelData.data.active ? 2 : 1
                                 clip: true
                                 Image { id: oldIcon; x:12; y:8; width:Math.min(28,parent.height*.2); height:width; source:Quickshell.iconPath(parent.application.icon,true); fillMode:Image.PreserveAspectFit }

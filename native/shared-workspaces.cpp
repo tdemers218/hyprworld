@@ -32,26 +32,31 @@ static Config::Actions::ActionResult requestWorkspace(PHLWORKSPACE workspace) {
     // Retain in-flight offsets, so reversing a swap doesn't restart at the edge.
     const auto incomingOffset = workspace->m_renderOffset->value();
     const auto outgoingOffset = outgoing->m_renderOffset->value();
+    const auto incomingAlpha = workspace->m_alpha->value();
+    const auto outgoingAlpha = outgoing->m_alpha->value();
     const auto displacement = there->m_position - here->m_position;
     State::workspacePlacementController()->swapActiveWorkspaces(here, there);
     // Both workspaces enter their destination monitor. Initialize the configured
     // fade as well as its damage callbacks before restoring spatial slide vectors.
     Animation::Workspace::startAnimation(workspace, Animation::Workspace::ANIMATION_TYPE_IN);
     Animation::Workspace::startAnimation(outgoing, Animation::Workspace::ANIMATION_TYPE_IN);
+    // These were already visible. Replaying a fade from zero on each swap
+    // flashes both monitors, especially when a swap is reversed mid-animation.
+    workspace->m_alpha->setValueAndWarp(incomingAlpha);
+    outgoing->m_alpha->setValueAndWarp(outgoingAlpha);
+    *workspace->m_alpha = 1.F;
+    *outgoing->m_alpha = 1.F;
     // Native workspace rendering includes tiled, floating and fullscreen windows.
     // The vector comes from logical monitor positions (including negative and
     // vertical offsets), rather than workspace number or an assumed left/right.
-    workspace->m_renderOffset->setValueAndWarp(incomingOffset + displacement);
-    outgoing->m_renderOffset->setValueAndWarp(outgoingOffset - displacement);
+    workspace->m_renderOffset->setValueAndWarp(workspace->m_renderOffset->enabled() ? incomingOffset + displacement : Vector2D{0,0});
+    outgoing->m_renderOffset->setValueAndWarp(outgoing->m_renderOffset->enabled() ? outgoingOffset - displacement : Vector2D{0,0});
     *workspace->m_renderOffset = Vector2D{0, 0};
     *outgoing->m_renderOffset = Vector2D{0, 0};
     return {};
 }
 
-static int setEnabled(lua_State* L) {
-    enabled = lua_toboolean(L, 1);
-    return 0;
-}
+static int setEnabled(lua_State* L) { enabled = lua_toboolean(L, 1); return 0; }
 
 // Read-only diagnostics used by the isolated integration test.
 static int inspect(lua_State* L) {

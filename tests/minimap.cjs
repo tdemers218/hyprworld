@@ -1,0 +1,81 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+function library(name) {
+    const context = vm.createContext({});
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', name), 'utf8').replace(/^\.pragma library\s*/, ''), context);
+    return context;
+}
+const settings = library('Settings.js'), layout = library('MinimapLayout.js');
+const previewSource = fs.readFileSync(path.join(__dirname, '..', 'Preview.qml'), 'utf8');
+assert.doesNotMatch(previewSource, /interval: root\.gesturing \? 32/);
+const defaults = settings.defaults().minimap;
+assert.equal(defaults.placementMode, 'fixed');
+assert.equal(settings.normalize({minimap:{shrinkToFit:true}}).minimap.placementMode,'fit');
+assert.equal(settings.normalize({minimap:{shrinkToFit:true,placementMode:'fixed'}}).minimap.placementMode,'fixed');
+assert.equal(defaults.style, 'classic');
+assert.equal(settings.defaults().effects.animations,true);
+assert.equal(settings.normalize({effects:{animations:false,postProcessing:false}}).effects.animations,false);
+assert.equal(settings.normalize({effects:{postProcessing:false}}).effects.postProcessing,false);
+assert.equal(settings.fields().find(f => f.key === 'hideBelow').advanced, true);
+assert.ok(!settings.fields().find(f => f.key === 'placementMode').advanced);
+assert.equal(settings.fields().find(f => f.key === 'placementMode').group,'Placement');
+assert.equal(settings.normalize({minimap:{hideBelow:500,style:'invalid'}}).minimap.hideBelow,100);
+assert.equal(settings.normalize({minimap:{style:'invalid'}}).minimap.style,'classic');
+const prefs = {...defaults, placementMode:'fit', hideBelow:0};
+const obstacle = {x:100,y:100,w:1720,h:880};
+let r = layout.fit(220,140,1920,1080,prefs,obstacle);
+assert.ok(r.scale < 1 && r.visible);
+assert.ok(r.x+r.w+6 <= obstacle.x || r.y+r.h+6 <= obstacle.y);
+assert.equal(layout.fit(220,140,1920,1080,{...prefs,hideBelow:100},obstacle).visible,false);
+assert.equal(layout.fit(220,140,1920,1080,prefs,{x:0,y:0,w:1920,h:1080}).visible,false);
+const roomy = layout.fit(220,140,1920,1080,prefs,{x:700,y:500,w:1000,h:500});
+assert.ok(roomy.scale > 1 && roomy.scale > r.scale);
+assert.ok(roomy.w<=prefs.fitMaxWidth && roomy.h<=prefs.fitMaxHeight);
+const capped=layout.fit(220,140,3840,2160,{...prefs,fitMaxWidth:300,fitMaxHeight:160},null);
+assert.ok(capped.w<=300 && capped.h<=160);
+assert.equal(layout.fit(220,140,1920,1080,prefs,obstacle).scale,r.scale);
+assert.equal(layout.fit(220,140,1920,1080,defaults,obstacle).scale,1);
+assert.equal(layout.fit(220,140,10,10,prefs,null).visible,false);
+// Deterministic property tests, including fractional logical pixels and huge insets.
+let seed = 17;
+const random = () => ((seed = (seed*1664525+1013904223)>>>0)/4294967296);
+for (let i=0;i<5000;i++) {
+    const sw=60+random()*2200, sh=60+random()*1500;
+    const p={...prefs,corner:['top-left','top-right','bottom-left','bottom-right'][i%4],
+        style:['classic','elevated','glass','high-contrast'][i%4],
+        shadow:i%2===0,showWorkspace:i%3===0,x:random()*1000,y:random()*1000};
+    const b={x:random()*sw,y:random()*sh,w:random()*sw,h:random()*sh};
+    const w=10+random()*800,h=10+random()*600;
+    const a=layout.fit(w,h,sw,sh,p,b);
+    assert.ok(a.scale>=0 && a.scale<=Math.min(sw/w,sh/h)+1e-8);
+    assert.ok(a.w<=p.fitMaxWidth+1e-8 && a.h<=p.fitMaxHeight+1e-8);
+    if (!a.visible) continue;
+    const margin=p.shadow || p.style==='elevated' || p.style==='glass'?28:6, top=Math.max(margin,p.showWorkspace?22:0);
+    const left=a.x-margin,right=a.x+a.w+margin,up=a.y-top,down=a.y+a.h+margin;
+    assert.ok(left>=-1e-8 && up>=-1e-8 && right<=sw+1e-8 && down<=sh+1e-8);
+    assert.ok(right<=b.x+1e-8 || left>=b.x+b.w-1e-8 || down<=b.y+1e-8 || up>=b.y+b.h-1e-8);
+    assert.ok(Math.abs(a.w/a.h-w/h)<1e-8);
+}
+const motion=library('OverviewMotion.js');
+const data={address:'0xa'}, app={name:'Browser'};
+const old=[{x:40,y:60,w:100,h:80,opacity:.8,data,application:app}];
+const cards=[{x:20,y:30,w:110,h:90,data,application:app}];
+const captured=motion.outgoing(cards,old,.4,1000,-700);
+assert.equal(captured[0].x,-560);
+assert.equal(captured[0].y,480);
+assert.ok(Math.abs(captured[0].opacity-.32)<1e-9);
+assert.equal(captured[1].x,420);
+assert.equal(captured[1].y,-250);
+assert.equal(captured[1].opacity,.6);
+assert.equal(captured[1].data,data);
+assert.equal(captured[1].application,app);
+assert.equal(motion.outgoing(Array(600).fill(cards[0]),[],0,0,0).length,500);
+console.log('ok - minimap defaults, advanced threshold, fit modes and 5000 geometry cases');
+const stable={x:100,y:100,w:900,h:600};
+assert.equal(layout.stableObstacle(stable,{x:-1200,y:80,w:900,h:600},true),stable);
+assert.equal(layout.stableObstacle(stable,null,true),stable);
+assert.notEqual(layout.stableObstacle(stable,{x:100,y:100,w:450,h:600},true),stable);
+assert.notEqual(layout.stableObstacle(stable,{x:100,y:100,w:900,h:600},false),stable);
+for (const input of [null,[],{placement:{nodes:[null,4]}},{startup:{templates:[null,{apps:[null]}]}}]) assert.doesNotThrow(()=>settings.normalize(input));

@@ -18,19 +18,30 @@ local config = load_relative("config.lua")
 local core = load_relative("core.lua")
 local preferences = load_relative("preferences.lua")
 local gestures = load_relative("gestures.lua")
+local checkpoint = load_relative("checkpoint.lua")
+local checkpoint_scope = checkpoint.scope()
+local state_home = os.getenv("XDG_STATE_HOME")
+if not state_home or state_home == "" then state_home = (os.getenv("HOME") or "") .. "/.local/state" end
+local restored_workspaces = checkpoint.load(state_home .. "/hyprworld/layout.json", checkpoint_scope)
+local checkpoint_changed
 local gesture, gesture_timer
+local snapshots = {}
+local publish_snapshot, publish_gesture
 local function end_gesture()
     if not gesture then return end
     local old = gesture
     gesture = nil
-    if gesture_timer then gesture_timer:set_enabled(false) end
+    if gesture_timer then pcall(function() gesture_timer:set_enabled(false) end) end
     if hl.get_config("input.follow_mouse") == 2 then
         hl.config({input = {follow_mouse = old.follow_mouse}})
+    end
+    if publish_snapshot and snapshots[old.key] then
+        publish_gesture(snapshots[old.key])
+        publish_snapshot(snapshots[old.key], true)
     end
 end
 _G.__hyprworld_end_gesture = end_gesture
 local workspaces = {}
-local publish_snapshot
 local overview_transfer = false
 local zoom_timer, zoom_key, zoom_mouse
 local function stop_zoom()
@@ -42,7 +53,6 @@ local function stop_zoom()
     if zoom_mouse and hl.get_config("input.follow_mouse") == 2 then hl.config({input={follow_mouse=zoom_mouse}}) end
     zoom_mouse = nil
 end
-local snapshots = {}
 local last_overview_key = nil
 
 
@@ -50,6 +60,19 @@ local function safe_field(value, field)
     if value == nil then return nil end
     local ok, result = pcall(function() return value[field] end)
     if ok then return result end
+end
+
+-- Special workspaces can own keyboard focus without replacing the normal
+-- workspace displayed by the monitor. Overview state belongs to the latter.
+local function active_normal_workspace()
+    local monitor = hl.get_active_monitor and hl.get_active_monitor()
+    local normal = safe_field(monitor, "active_workspace")
+    local normal_id = safe_field(normal, "id")
+    if normal_id and normal_id > 0 then return normal end
+    local active = hl.get_active_window and hl.get_active_window()
+    local workspace = hl.get_active_workspace and hl.get_active_workspace() or safe_field(active, "workspace")
+    local id = safe_field(workspace, "id")
+    return id and id > 0 and workspace or nil
 end
 
 local function window_id(window, index)
@@ -96,6 +119,11 @@ local function describe(ctx)
 end
 
 local function context(ctx)
+    local data = preferences.data and preferences.data()
+    local function section(name)
+        if data then return type(data[name]) == "table" and data[name] or {} end
+        return preferences.section(name)
+    end
     local key = workspace_key(ctx)
     local state = workspaces[key]
     if not state then
@@ -109,8 +137,8 @@ local function context(ctx)
         table.insert(ids, target_id(target, #ids + 1))
     end
     if preferences.section then
-        local flow=preferences.section('workflow')
-        local next_path=preferences.section('placement')
+        local flow=section('workflow')
+        local next_path=section('placement')
         if state.placement~=next_path then state.path_index=nil end
         state.placement=next_path
         if state.placement.scope=='specific' then
@@ -120,7 +148,7 @@ local function context(ctx)
             end
             if not applies then state.placement=nil end
         end
-        state.group_layouts=preferences.section('groups').layouts
+        state.group_layouts=section('groups').layouts
         state.compact_on_close=flow.compactOnClose~=false
         state.compact_on_move=flow.compactOnMove~=false
         state.preserve_focus=flow.preserveFocus==true
@@ -132,9 +160,10 @@ local function context(ctx)
         config.height_steps={h*.5/.85,h*.67/.85,h,1}
     end
     core.sync(state, ids, active_id, config)
+    checkpoint.restore(restored_workspaces[key], state, ids, config)
     if preferences.section then
         state.template_placed=state.template_placed or {}
-        for _,template in ipairs(preferences.section('startup').templates or {}) do
+        for _,template in ipairs(section('startup').templates or {}) do
             if template.workspace==tonumber(key:match('workspace:(.+)')) then
                 local used={}
                 for _,id in ipairs(ids) do
@@ -159,11 +188,12 @@ local function context(ctx)
     end
     state.defer_active_camera = true
 
-    state.keep_connected = preferences.keep_connected()
+    state.keep_connected = preferences.keep_connected(data)
     if not state.on_move then
         state.on_move = function()
             if state.compact_timer then state.compact_timer:set_enabled(false) end
             state.compact_due=false
+            state.compact_remaining=0
             local enabled,delay=preferences.keep_connected()
             if not enabled then return end
             state.compact_remaining=delay
@@ -240,6 +270,7 @@ local function place_state(ctx, state, descriptors)
         local placement = placements[id]
         if placement then descriptor.target:place(placement) end
     end
+    if checkpoint_changed then checkpoint_changed(workspace_key(ctx), state) end
     if publish_snapshot then publish_snapshot(snapshots[workspace_key(ctx)]) end
 end
 
@@ -263,8 +294,10 @@ local function recalculate(ctx)
 end
 
 local function layout_msg(ctx, message)
-    local state, descriptors = context(ctx)
+    if type(message) ~= "string" then return "hyprworld: layout message must be text" end
     local command, argument, extra = message:match("^(%S+)%s*(%S*)%s*(%S*)$")
+    if gesture and (command=="gesture-tick" or command=="gesture-end") then ctx=gesture.ctx end
+    local state, descriptors = context(ctx)
     if command ~= "zoom-wheel" and command ~= "zoom-tick" and command ~= "refresh" then stop_zoom() end
 
     if command == "gesture-pan" or command == "gesture-move" then
@@ -277,7 +310,7 @@ local function layout_msg(ctx, message)
         if not snapshot then return true end
         local tile = gestures.hit(snapshot.tiles, cursor.x, cursor.y)
         if command == "gesture-move" and not tile then return true end
-        gesture = {key=workspace_key(ctx), mode=command == "gesture-pan" and "pan" or "move",
+        gesture = {ctx=ctx,key=workspace_key(ctx), mode=command == "gesture-pan" and "pan" or "move",
             start=cursor, cursor=cursor, source=tile, x=state.camera.x or 0, y=state.camera.y or 0,
             follow_mouse=hl.get_config("input.follow_mouse"), monitor=snapshot.monitor}
         hl.config({input={follow_mouse=2}})
@@ -287,11 +320,10 @@ local function layout_msg(ctx, message)
                 local active = hl.get_active_window()
                 local ws = safe_field(active, "workspace")
                 local monitor = hl.get_monitor_at_cursor()
-                if "workspace:" .. tostring(safe_field(ws, "id")) ~= gesture.key
-                    or safe_field(monitor, "name") ~= gesture.monitor then end_gesture(); return end
+                if gesture.mode=="pan" and ("workspace:" .. tostring(safe_field(ws, "id")) ~= gesture.key or safe_field(monitor,"name") ~= gesture.monitor) then end_gesture(); return end
                 local pos = hl.get_cursor_pos()
                 if pos and (pos.x ~= gesture.cursor.x or pos.y ~= gesture.cursor.y) then
-                    hl.dispatch(hl.dsp.layout("gesture-tick"))
+                    layout_msg(gesture.ctx,"gesture-tick")
                 end
             end, {timeout=16,type="repeat"})
         else gesture_timer:set_enabled(true) end
@@ -299,17 +331,39 @@ local function layout_msg(ctx, message)
     elseif command == "gesture-tick" or command == "gesture-end" then
         if not gesture or gesture.key ~= workspace_key(ctx) then end_gesture(); return true end
         local g = gesture
-        if safe_field(hl.get_monitor_at_cursor(), "name") ~= g.monitor then end_gesture(); return true end
+        local source_exists=false
+        for _,d in pairs(descriptors) do if g.source and d.address==g.source.address then source_exists=true;break end end
+        if g.mode=="move" and not source_exists then end_gesture(); return true end
+        local cursor_monitor = hl.get_monitor_at_cursor()
+        if not cursor_monitor then end_gesture(); return true end
         g.cursor = hl.get_cursor_pos() or g.cursor
         local dx, dy = g.cursor.x-g.start.x, g.cursor.y-g.start.y
         g.moved = g.moved or dx*dx+dy*dy > 64
-        if g.mode == "pan" then
+        local cursor_monitor_name = safe_field(cursor_monitor, "name")
+        if g.mode == "pan" and cursor_monitor_name ~= g.monitor then
+            end_gesture(); return true
+        elseif g.mode == "pan" then
             state.camera.x, state.camera.y = g.x+dx, g.y+dy
         elseif g.moved then
-            local _, grid = core.placements(state, ctx.area, config)
-            g.drop = gestures.destination(snapshots[g.key].tiles, grid, g.source, g.cursor.x, g.cursor.y)
             local b = g.source.box
             g.ghost = {x=b.x+dx,y=b.y+dy,w=b.w,h=b.h}
+            if cursor_monitor_name and cursor_monitor_name ~= g.monitor then
+                local workspace = safe_field(cursor_monitor, "active_workspace")
+                local workspace_id = safe_field(workspace, "id")
+                g.target_workspace = workspace_id and workspace_id > 0 and workspace_id or nil
+                g.drop = g.target_workspace and {label="Release to move to " .. cursor_monitor_name, monitor=cursor_monitor_name,
+                    monitorX=safe_field(cursor_monitor, "x") or 0, monitorY=safe_field(cursor_monitor, "y") or 0} or nil
+            else
+                g.target_workspace = nil
+                local _, grid = core.placements(state, ctx.area, config)
+                g.drop = gestures.destination(snapshots[g.key].tiles, grid, g.source, g.cursor.x, g.cursor.y)
+            end
+        end
+        if command == "gesture-tick" and g.mode == "move" then
+            -- Moving the hint does not move/recalculate the actual windows.
+            -- Send only drag geometry; full workspace data stays unchanged.
+            publish_gesture(snapshots[g.key])
+            return true
         end
         if command == "gesture-end" then
             end_gesture()
@@ -317,7 +371,12 @@ local function layout_msg(ctx, message)
                 for _, d in pairs(descriptors) do
                     if d.address == g.source.address then
                         core.observe_focus(state, d.id)
-                        if g.moved and g.drop then
+                        if g.moved and g.target_workspace then
+                            hl.dispatch(hl.dsp.window.move({window="address:" .. d.address,
+                                workspace=tostring(g.target_workspace), follow=false}))
+                            hl.dispatch(hl.dsp.focus({window="address:" .. d.address}))
+                            return true -- Do not re-place the transferred target using its old workspace.
+                        elseif g.moved and g.drop then
                             if g.drop.swapAddress then
                                 for _, target in pairs(descriptors) do
                                     if target.address == g.drop.swapAddress then core.swap_members(state,d.id,target.id); break end
@@ -476,6 +535,12 @@ local function layout_msg(ctx, message)
     return true
 end
 
+_G.__hyprworld_finish_gesture=function()
+    if not gesture then return false end
+    layout_msg(gesture.ctx,"gesture-end")
+    return true
+end
+
 local function window_layout_name(window)
     local layout = safe_field(window, "layout")
     return safe_field(layout, "name")
@@ -564,6 +629,9 @@ if not rawget(_G, "__hyprworld_focus_subscription") then
                 stop_zoom()
             end
             if gesture then
+                -- Monitor focus follows the pointer during a move. The source
+                -- context and explicit window address still own this gesture.
+                if gesture.mode=="move" then return end
                 local ws = safe_field(window, "workspace")
                 if gesture.key == "workspace:" .. tostring(safe_field(ws, "id")) then return end
                 end_gesture()
@@ -609,15 +677,68 @@ local function json(value)
     return 'null'
 end
 local revision = 0
+local checkpoint_signatures = {}
+checkpoint_changed = function(key, state)
+    local signature = json(checkpoint.capture(state))
+    if checkpoint_signatures[key] == signature then return end
+    checkpoint_signatures[key] = signature
+    if hl.dsp.event then hl.dispatch(hl.dsp.event("hyprworld-state")) end
+end
+_G.__hyprworld_checkpoint = function()
+    if not checkpoint_scope then return nil end
+    if gesture or zoom_key then return json({busy=true}) end
+    -- Inactive workspaces may not receive layout callbacks immediately after
+    -- a reset. Keep their checkpoint until their live state is available.
+    local saved = {}
+    for key,record in pairs(restored_workspaces) do saved[key] = record end
+    for key,state in pairs(workspaces) do
+        if state.overview_drag or (state.compact_remaining and state.compact_remaining>0) then return json({busy=true}) end
+        if key:match('^workspace:') then saved[key] = checkpoint.capture(state) end
+    end
+    return json({version=1,scope=checkpoint_scope,workspaces=saved})
+end
 local preview_epoch = tostring({})
-publish_snapshot = function(snapshot)
-    if overview_transfer then return end
+local function stamp(snapshot)
     revision = revision + 1
     snapshot.revision = revision
     snapshot.epoch = preview_epoch
-    local ws = hl.get_active_workspace and hl.get_active_workspace()
-    if ws and safe_field(ws,"id") ~= snapshot.workspaceId then return end
-    if hl.dsp.event then hl.dispatch(hl.dsp.event("hyprworld-preview," .. json(snapshot))) end
+    snapshot.gesture = gesture and {mode=gesture.mode, ghost=gesture.ghost, drop=gesture.drop} or nil
+end
+local function publish_payload(kind, snapshot)
+    if hl.dsp.event then
+        local payload = json(snapshot)
+        -- Hyprland truncates event data at 1024 bytes. Keep each fragment,
+        -- including its header, below that limit without splitting UTF-8.
+        if #payload <= 900 then
+            hl.dispatch(hl.dsp.event("hyprworld-" .. kind .. "," .. payload))
+        else
+            local parts, first = {}, 1
+            while first <= #payload do
+                local last = math.min(first + 899, #payload)
+                while last < #payload and payload:byte(last + 1) >= 128 and payload:byte(last + 1) < 192 do last = last - 1 end
+                parts[#parts + 1] = payload:sub(first, last)
+                first = last + 1
+            end
+            for index, part in ipairs(parts) do
+                hl.dispatch(hl.dsp.event("hyprworld-" .. kind .. "-part," .. preview_epoch .. "," .. revision .. "," .. index .. "," .. #parts .. "," .. part))
+            end
+        end
+    end
+end
+publish_gesture = function(snapshot)
+    if not snapshot or overview_transfer then return end
+    stamp(snapshot)
+    publish_payload("drag", {epoch=snapshot.epoch, revision=snapshot.revision,
+        monitor=snapshot.monitor, monitorX=snapshot.monitorX, monitorY=snapshot.monitorY,
+        gesture=snapshot.gesture or false})
+end
+publish_snapshot = function(snapshot, force)
+    if overview_transfer then return end
+    stamp(snapshot)
+    local ws = active_normal_workspace()
+    local visible_key = gesture and gesture.key or (ws and "workspace:" .. tostring(safe_field(ws,"id")))
+    if not force and visible_key and visible_key ~= "workspace:" .. tostring(snapshot.workspaceId) then return end
+    publish_payload("preview", snapshot)
 end
 _G.__hyprworld_prepare_overview_transfer = function()
     overview_transfer = true
@@ -628,17 +749,15 @@ _G.__hyprworld_preview = function()
     if overview_transfer then return json(snapshots[last_overview_key] or {}) end
     -- Workspace ownership is authoritative while exclusive layers leave window
     -- focus stale (especially during an atomic two-monitor swap).
-    local active = hl.get_active_window()
-    local ws = hl.get_active_workspace and hl.get_active_workspace() or safe_field(active, "workspace")
-    local snapshot = snapshots[ws and "workspace:" .. tostring(safe_field(ws, "id")) or last_overview_key] or {}
+    local ws = active_normal_workspace()
+    local snapshot = snapshots[gesture and gesture.key or (ws and "workspace:" .. tostring(safe_field(ws, "id")) or last_overview_key)] or {}
     snapshot.gesture = gesture and {mode=gesture.mode, ghost=gesture.ghost, drop=gesture.drop} or nil
     return json(snapshot)
 end
 
 _G.__hyprworld_overview_active = function()
     local state = last_overview_key and workspaces[last_overview_key]
-    local active = hl.get_active_window()
-    local ws = hl.get_active_workspace and hl.get_active_workspace() or safe_field(active, "workspace")
+    local ws = active_normal_workspace()
     local same = not ws or last_overview_key == "workspace:" .. tostring(safe_field(ws, "id"))
     return same and state and state.overview or false
 end
@@ -647,7 +766,7 @@ end
 _G.__hyprworld_set_overview = function(enabled, direction, commit, directionY)
     local active=hl.get_active_window()
     local monitor=hl.get_active_monitor and hl.get_active_monitor() or safe_field(active,"monitor")
-    local ws=hl.get_active_workspace and hl.get_active_workspace() or safe_field(active,"workspace")
+    local ws=active_normal_workspace()
     local id=safe_field(ws,"id")
     if not id then return end
     local key="workspace:"..id
@@ -682,8 +801,33 @@ _G.__hyprworld_toggle_overview=function()
     _G.__hyprworld_set_overview(not _G.__hyprworld_overview_active(),nil,true)
 end
 
+-- A stale target or a malformed runtime input must not strand input modes or
+-- abort the compositor's layout callback. Normal results are passed unchanged.
+local last_failure
+local function recover_layout(ctx, err)
+    pcall(end_gesture); pcall(stop_zoom); pcall(finish_hover_cooldown)
+    if last_failure~=tostring(err) then print("Hyprworld layout failed: "..tostring(err));last_failure=tostring(err) end
+    local area=safe_field(ctx,"area")
+    local targets=safe_field(ctx,"targets") or {}
+    if type(targets)~="table" then return end
+    if not area or #targets==0 then return end
+    for i,target in ipairs(targets) do
+        pcall(function() target:place({x=area.x+(i-1)*area.w/#targets,y=area.y,w=math.max(1,area.w/#targets),h=math.max(1,area.h)}) end)
+    end
+end
+local raw_layout_msg=layout_msg
+layout_msg=function(ctx,message)
+    local ok,result=pcall(raw_layout_msg,ctx,message)
+    if ok then return result end
+    recover_layout(ctx,result)
+    return "hyprworld: layout action failed; see compositor log"
+end
 hl.layout.register("hyprworld", {
-    recalculate = recalculate,
+    recalculate = function(ctx)
+        local ok,result=pcall(recalculate,ctx)
+        if not ok then recover_layout(ctx,result) end
+        return result
+    end,
     layout_msg = layout_msg,
 })
 

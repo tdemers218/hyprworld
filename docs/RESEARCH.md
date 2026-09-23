@@ -3,6 +3,9 @@
 These notes are preserved from Hyprscroll2D, which records research against
 Hyprland 0.56.2 on 2026-08-24. They describe the original design investigation,
 not a current survey or compatibility guarantee. Project status may have changed.
+Current Hyprworld also uses a native C++ workspace helper; the original pure-Lua
+design choice below does not describe the full current package. See
+[the current design](DESIGN.md) and [compatibility audit](COMPATIBILITY-AUDIT.md).
 
 ## Existing projects
 

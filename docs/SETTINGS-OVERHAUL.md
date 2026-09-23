@@ -28,7 +28,7 @@ Text remains for ambiguous concepts and accessible names.
 
 | Section | Working controls |
 | --- | --- |
-| Minimap | Visibility exceptions, position, size, borders, corners, fill/backdrop opacity, custom colors, icons, titles, workspace label, click-to-focus, movement/fade durations |
+| Minimap | Visibility exceptions, fixed/fit sizing, fit maximum dimensions, position, size, borders, corners, fill/backdrop opacity, custom colors, icons, titles, workspace label, click-to-focus, movement/fade durations |
 | Overview | Open/close and workspace transition timing, easing, reduced motion, wallpaper dimming, card/group sizes, spacing, corners, colors, labels, title font size, search scope/metadata, empty-space exit |
 | Flow | Compaction delay and move/removal triggers, focused-tile anchoring, click/hover focus, hover cooldown, gaps, edge peeks, initial dimensions, gesture threshold and pinch sensitivity |
 | Placement paths | Horizontal/vertical/custom, visual numbered editor, branching, tile capacity, order, vacancy filling, extend/repeat overflow |
@@ -38,7 +38,11 @@ Text remains for ambiguous concepts and accessible names.
 | Plugin | Enable/disable, shell refresh, original-plugin credits |
 
 Appearance and layout settings apply without a configuration reload. Shortcut or
-plugin-enable changes still reload Hyprland and therefore reset in-memory groups.
+plugin-enable changes reload Hyprland; settled checkpoints restore matching open
+windows within that compositor session. See [layout recovery](LAYOUT-RECOVERY.md).
+Automatic checkpoints are separate from startup templates and require no settings
+switch. Fit resizing glides with the minimap movement duration; equal-sized focus
+changes retain the fit. Disabled animations or zero duration make it immediate.
 Placement changes govern newly placed windows. Startup template arrangements match
 new windows on their configured workspace; manually launching a template can reuse
 matching windows from another workspace. If a preferred monitor is absent, normal
@@ -65,7 +69,9 @@ These remain design proposals, not inactive switches in the UI:
 
 `make check` includes schema migration, custom path placement/group capacity,
 vacancy reuse, group partition geometry, JSON escapes, startup duplicate detection,
-command quoting, and the existing navigation/compaction/shortcut regressions.
+command quoting, malformed nested settings, minimap fit invalidation, checkpoint
+recovery, event transport, and the navigation/compaction/shortcut regressions.
+Qt Quick tests verify fit-size interpolation and retargeting without snapping.
 
 An isolated compositor also verified settings rendering, fuzzy control search,
 draft/revert/save, and real startup command dispatch, target workspace, matching,

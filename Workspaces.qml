@@ -37,7 +37,7 @@ BarWidget {
                 fixedWidth: root.vertical ? root.barSize : Style.space(20)
                 fixedHeight: root.barSize
                 Rectangle { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 12; height: 2; radius: 1; color: Color.accent; visible: parent.active }
-                onPressed: Quickshell.execDetached(["hyprctl", "eval", "if __hyprworld_workspace_nav then __hyprworld_workspace_nav.select(" + workspaceId + ") end"])
+                onPressed: Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl", "eval", "if __hyprworld_workspace_nav then __hyprworld_workspace_nav.select(" + workspaceId + ") end"])
             }
         }
     }

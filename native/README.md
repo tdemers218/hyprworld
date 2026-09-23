@@ -37,6 +37,26 @@ temporary home, rather than accepting an instance ID:
 python3 tests/live_package.py
 ```
 
-It requires the built helper, Quickshell and Omarchy's installed shell components.
+It requires matching build tools/Hyprland headers, Quickshell, Kitty and Omarchy's
+installed shell components. The temporary Service builds/loads its cached helper.
 It checks the public package ID, actual native loading, Lua registration, settings
-opening, preferences, disable/re-enable, and explicit native removal.
+opening, preferences, disable/re-enable and explicit native removal in isolation.
+It also verifies large Unicode preview delivery through the real event socket,
+12 config reloads retaining the same native handle, active/inactive checkpoint
+restoration across three Lua resets with no idle rewrites, and continuous local
+and remote drag outlines in both directions (including negative origins/scaling).
+
+`tests/live_checkpoint.py` and `tests/live_drag.py` are orchestrated by this test;
+the former needs its temporary `XDG_STATE_HOME`, and the latter the test shell
+path. Do not run either against the user session.
+
+## Runtime loading and updates
+
+The full Service builds under `$XDG_CACHE_HOME/hyprworld/` (default
+`~/.cache/hyprworld/`), separate from `make native` output in `native/build/`.
+Bootstrap loads by bounded native IPC before evaluating Lua. Every config
+generation declares the helper path, even when already loaded, so reconciliation
+does not unload/reload it repeatedly. Source reloads retain the loaded handle;
+a rebuilt file does not replace native code already mapped into the compositor.
+Start a new compositor session after changing native code or upgrading Hyprland.
+Manual native unload remains a lifecycle test, not the routine user update path.

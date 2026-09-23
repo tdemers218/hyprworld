@@ -102,7 +102,7 @@ Item {
         status = "Checking all active shortcuts…"; bindingCheck.running = true
     }
     function writeSettings() { status = "Saving…"; settingsFile.setText(JSON.stringify(submitted, null, 2) + "\n") }
-    Process { id: closeOverview; command: ["hyprctl", "eval", 'if __hyprworld_overview_active and __hyprworld_overview_active() then hl.dispatch(hl.dsp.layout("overview-close")) end'] }
+    Process { id: closeOverview; command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "eval", 'if __hyprworld_overview_active and __hyprworld_overview_active() then hl.dispatch(hl.dsp.layout("overview-close")) end'] }
     Process {
         id: wallpaperReader
         command: ["readlink", "-f", Quickshell.env("HOME") + "/.local/state/omarchy/current/background"]
@@ -151,14 +151,14 @@ Item {
         }
     }
     Process {
-        id: reloadBindings; command: ["hyprctl", "reload"]
+        id: reloadBindings; command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "reload"]
         onExited: function(code) {
             if (code === 0) checkErrors.running = true
             else { root.busy = false; root.failed = true; root.status = "Saved, but shortcut reload failed. Run hyprctl reload to retry." }
         }
     }
     Process {
-        id: checkErrors; command: ["hyprctl", "configerrors"]
+        id: checkErrors; command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "configerrors"]
         stdout: StdioCollector { id: errorOutput }
         onExited: function(code) {
             root.busy = false; root.failed = code !== 0 || errorOutput.text.trim().length > 0
@@ -166,8 +166,8 @@ Item {
             if (!root.failed && root.restartNeeded) restartShell.running = true
         }
     }
-    Process { id: applyMouse; command: ["hyprctl", "eval", "if __hyprworld_apply_mouse then __hyprworld_apply_mouse() end; hl.dispatch(hl.dsp.layout(\"refresh\"))"] }
-    Process { id: restartShell; command: ["hyprctl", "dispatch", 'hl.dsp.exec_cmd("omarchy restart shell")'] }
+    Process { id: applyMouse; command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "eval", "if __hyprworld_apply_mouse then __hyprworld_apply_mouse() end; hl.dispatch(hl.dsp.layout(\"refresh\"))"] }
+    Process { id: restartShell; command: ["timeout", "--kill-after=1s", "5s", "hyprctl", "dispatch", 'hl.dsp.exec_cmd("omarchy restart shell")'] }
 
     Process {
         id: startupCommand
@@ -230,7 +230,7 @@ Item {
                         readonly property bool wide:width>=1080
                         readonly property bool showPreview:wide && !root.query.trim() && (root.sectionId==="minimap" || root.sectionId==="overview")
                         property real previewWidth:showPreview?300:0
-                        Behavior on previewWidth {NumberAnimation {duration:220;easing.type:Easing.InOutCubic}}
+                        Behavior on previewWidth {NumberAnimation {duration:root.settings.effects.animations ? 220 : 0;easing.type:Easing.InOutCubic}}
                         Label {x:24;y:22;text:"Hyprworld";font.pixelSize:23;font.bold:true}
                         Label {x:24;y:53;width:card.rail-28;elide:Text.ElideRight;text:"Make space for your flow";font.pixelSize:11;color:Color.muted}
                         SettingsTextField {
@@ -334,7 +334,7 @@ Item {
                                         Label {width:parent.width;wrapMode:Text.Wrap;color:Color.muted;text:"Appearance and Flow changes apply live. Shortcut changes reload Hyprland. In-memory groups reset on a compositor configuration reload."}
                                         Label {text:"Credits";font.pixelSize:18;font.bold:true}
                                         Label {width:parent.width;wrapMode:Text.Wrap;text:"Hyprworld builds on Hyprscroll 2D by kirollosatef. Thank you to the original author and the Omarchy community.";color:Color.muted}
-                                        Action {text:"Original plugin ↗";onClicked:Qt.openUrlExternally("https://plugins.omarchy.org/plugin.html?id=io.github.kirollosatef.hyprscroll2d")}
+                                        Action {text:"Original plugin ↗";onClicked:Qt.openUrlExternally("https://plugins.omarchy.org/plugin.html?id=io.github.kirollosatef.hyprworld")}
                                         Action {text:"Refresh shell";enabled:!root.dirty && !root.busy;onClicked:restartShell.running=true}
                                     }
                                     Item {width:1;height:12}
@@ -344,7 +344,7 @@ Item {
                         Item {
                             visible:card.previewWidth>0;x:card.width-card.previewWidth-4;y:102;width:card.previewWidth-20;height:card.height-200;clip:true
                             opacity:card.showPreview?1:0
-                            Behavior on opacity {NumberAnimation {duration:180}}
+                            Behavior on opacity {NumberAnimation {duration:root.settings.effects.animations ? 180 : 0}}
                             Column {width:280;spacing:16
                                 Label {text:"PREVIEW";font.pixelSize:10;font.letterSpacing:1.5;color:Color.muted}
                                 SettingsPreview {width:parent.width;height:240;preferences:root.settings;overview:root.sectionId==="overview";wallpaper:root.wallpaper}

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import "MinimapLayout.js" as MinimapLayout
 
 Rectangle {
     id: root
@@ -13,13 +14,23 @@ Rectangle {
     Image { anchors.fill: parent; source: root.wallpaper ? "file://" + root.wallpaper : ""; fillMode: Image.PreserveAspectCrop; opacity: root.overview ? (root.preferences.overview.wallpaper ? 0.55 : 0) : 0.18 }
     Rectangle { anchors.fill: parent; color: Util.alpha(Color.background, root.overview ? 0.2 : 0.5) }
     Text { x: 12; y: 10; text: "SAMPLE WORKSPACE"; color: Color.foreground; opacity: 0.6; font.family: Style.font.family; font.pixelSize: 9; font.letterSpacing: 1 }
+    Rectangle {
+        visible: !root.overview && root.preferences.minimap.placementMode === "fit"
+        x:root.width*.4; y:root.height*.35; width:root.width*.55; height:root.height*.6
+        radius:6; color:Util.alpha(Color.foreground,.06)
+        border.color:Util.alpha(Color.foreground,.2)
+        Text { anchors.centerIn:parent; text:"Focused window"; color:Color.foreground; opacity:.5; font.pixelSize:10 }
+    }
     Item {
         id: map
-        visible: !root.overview && root.preferences.minimap.enabled
-        width: 516 * factor; height: 356 * factor
-        x: root.preferences.minimap.corner.endsWith("right") ? root.width-width-12-root.preferences.minimap.x*.2 : 12+root.preferences.minimap.x*.2
-        y: root.preferences.minimap.corner.startsWith("bottom") ? Math.max(28, root.height-height-14-root.preferences.minimap.y*.2) : Math.min(root.height-height-14,28+root.preferences.minimap.y*.2)
-        readonly property real factor: Math.min(root.preferences.minimap.width / 516, root.preferences.minimap.height / 356) * 0.4
+        visible: !root.overview && root.preferences.minimap.enabled && fitted.visible
+        readonly property var samplePrefs: Object.assign({}, root.preferences.minimap, {x:12+root.preferences.minimap.x*.2,y:28+root.preferences.minimap.y*.2})
+        readonly property real naturalFactor: Math.min(root.preferences.minimap.width / 516, root.preferences.minimap.height / 356) * 0.4
+        readonly property var fitted: MinimapLayout.fit(516*naturalFactor,356*naturalFactor,root.width,root.height,samplePrefs,
+            {x:root.width*.4,y:root.height*.35,w:root.width*.55,h:root.height*.6})
+        width: fitted.w; height: fitted.h; x: fitted.x; y: fitted.y
+        readonly property real factor: naturalFactor*fitted.scale
+        MinimapSurface { anchors.fill: parent; preferences: root.preferences.minimap; effects:root.preferences.effects; wallpaper: root.wallpaper }
         Repeater {
             model: root.boxes
             Rectangle { required property var modelData; required property int index

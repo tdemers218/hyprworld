@@ -9,6 +9,11 @@ Column {
     signal edited(string key, var value)
     spacing: 8
     readonly property var current: preferences[field.key]
+    Text {
+        width: parent.width; visible: !!root.field.description
+        text: root.field.description || ""; color: Color.muted
+        font.pixelSize: 11; wrapMode: Text.Wrap
+    }
     Row {
         width: parent.width; spacing: 10
         Text { width: parent.width - (root.field.type === "toggle" ? 54 : 0); text: root.field.title; color: Color.foreground; font.pixelSize: 13; wrapMode: Text.Wrap; anchors.verticalCenter: parent.verticalCenter }

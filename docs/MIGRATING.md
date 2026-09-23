@@ -35,11 +35,10 @@ or modify the old plugin's preference files automatically.
 
 ## 2. Remove the old integration
 
-If installed as a shell plugin:
+Save your work and disable the previous plugin in its own settings first. If
+installed as a shell plugin:
 
 ```sh
-# If the previous fork loaded the shared-workspace helper, unload it first:
-hyprctl plugin unload ~/.config/omarchy/plugins/io.github.kirollosatef.hyprscroll2d/native/build/shared-workspaces.so
 omarchy plugin remove io.github.kirollosatef.hyprscroll2d --yes
 hyprctl reload
 hyprctl configerrors
@@ -53,11 +52,18 @@ and workspace rules yourself if they were not installed in a marked block.
 If the previous workspace widget was manually configured, remove its old module
 ID from your bar configuration. Keep the old checkout if you want a rollback.
 
+Start a new compositor session after removing the old integration, before
+enabling Hyprworld. This avoids stacking helpers with incompatible Lua APIs;
+a shell/config reload alone is not a native-code replacement.
+
 ## 3. Install Hyprworld
 
 Follow the [README](../README.md#install) using the new repository URL. Verify
 settings, shared workspace numbers, and shortcuts before continuing normal work.
-Existing groups and camera state cannot be migrated; they reset on reload.
+There is no automatic cross-plugin migration of groups or camera state. New
+Hyprworld checkpoints preserve subsequent settled arrangements across resets
+within the same compositor session. They do not survive the session restart
+needed for native-helper migration. See [layout recovery](LAYOUT-RECOVERY.md).
 
 | Interface | Previous fork | Hyprworld |
 | --- | --- | --- |
@@ -65,6 +71,7 @@ Existing groups and camera state cannot be migrated; they reset on reload.
 | Layout | `lua:hyprscroll2d-v16` (older versions: `lua:hyprscroll2d`) | `lua:hyprworld` |
 | Shell IPC target | `hyprscroll2d` | `hyprworld` |
 | Preferences | `hyprscroll2d.json` | `hyprworld.json` |
+| Checkpoints | Legacy builds may use `$XDG_STATE_HOME/hyprscroll2d/` | `$XDG_STATE_HOME/hyprworld/`; no automatic import |
 | Monitor order | Legacy monitor-order files | Not used; workspace IDs are shared |
 | Installer config override | `HYPRSCROLL2D_HYPRLAND_CONFIG` | `HYPRWORLD_HYPRLAND_CONFIG` |
 | Installer skip reload | `HYPRSCROLL2D_SKIP_RELOAD` | `HYPRWORLD_SKIP_RELOAD` |

@@ -14,6 +14,7 @@ Canvas {
         if(kind==='minimap'){box(4,5,5,4);box(11,5,5,4);box(4,11,5,4)}
         else if(kind==='overview'){line(2,7,2,2);line(2,2,7,2);line(13,2,18,2);line(18,2,18,7);line(2,13,2,18);line(2,18,7,18);line(13,18,18,18);line(18,18,18,13)}
         else if(kind==='workflow'){c.beginPath();c.moveTo(2,6);c.bezierCurveTo(14,-2,6,22,18,14);c.stroke()}
+        else if(kind==='effects'){line(10,1,10,19);line(1,10,19,10);line(4,4,16,16);line(4,16,16,4)}
         else if(kind==='placement'){box(1,8,4,4);box(14,1,4,4);box(14,14,4,4);line(5,10,10,10);line(10,10,10,3);line(10,3,14,3);line(10,10,10,16);line(10,16,14,16)}
         else if(kind==='groups'){box(2,2,16,16);line(10,2,10,18);line(10,10,18,10)}
         else if(kind==='startup'){c.beginPath();c.arc(10,11,7,-Math.PI/3,Math.PI*4/3);c.stroke();line(10,1,10,10)}

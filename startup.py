@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Launch saved workspace templates; capture never guesses executable commands."""
-import argparse, fcntl, json, os, subprocess, sys
+import argparse, fcntl, hashlib, json, os, re, subprocess, sys
 from pathlib import Path
 
 def quote(value):
@@ -8,7 +8,7 @@ def quote(value):
 
 def ctl(*args):
     p=subprocess.run(['hyprctl',*args],capture_output=True,text=True,timeout=10,check=True)
-    if p.stdout.strip().startswith('error:'): raise RuntimeError(p.stdout.strip())
+    if p.stdout.strip().lower().startswith(('error', 'warning:')): raise RuntimeError(p.stdout.strip())
     return p.stdout
 
 def snapshot(): return json.loads(ctl('repl','return __hyprworld_preview and __hyprworld_preview() or "{}"'))
@@ -52,8 +52,13 @@ def main():
     runtime=Path(os.environ.get('XDG_RUNTIME_DIR','/tmp'))/('hyprworld-startup-'+str(os.getuid()))
     runtime.mkdir(mode=0o700,exist_ok=True)
     with (runtime/'lock').open('w') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
-        marker=runtime/(os.environ.get('HYPRLAND_INSTANCE_SIGNATURE','session')+'.done')
+        try: fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if args.action=='autostart': return
+            raise RuntimeError("Another startup template is still being applied; retry shortly")
+        signature=os.environ.get('HYPRLAND_INSTANCE_SIGNATURE','session')
+        safe_signature=signature if re.fullmatch(r'[A-Za-z0-9_.-]{1,240}',signature) else hashlib.sha256(signature.encode()).hexdigest()
+        marker=runtime/(safe_signature+'.done')
         if args.action=='autostart' and marker.exists():return
         clients=json.loads(ctl('-j','clients'));total=0;used=set()
         for template in templates:

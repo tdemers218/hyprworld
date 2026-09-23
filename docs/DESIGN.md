@@ -31,7 +31,18 @@ The Lua adapter emits snapshots consumed by the QML overlays. Overview supports
 keyboard navigation, drag operations, and transitions between workspaces,
 including empty workspaces. Closing it releases the keyboard grab before
 committing the selected window's focus. The minimap tracks canvas geometry and
-camera position. Visual preferences live outside the watched plugin directory.
+camera position. Fit geometry is retained across same-sized focus changes.
+`MinimapFitMotion.qml` interpolates the fitted position, dimensions and scale
+from the current frame, so retargeting does not snap. Global animation settings
+and the minimap movement duration control this transition.
+
+Full snapshots use UTF-8-safe fragments with at most 900 payload bytes when they
+exceed the event budget. `PreviewStream.js` bounds and reassembles them, rejecting
+stale revisions. Pointer ticks publish a separate compact ghost/drop frame;
+they do not rebuild the tile model or re-place real windows. Click-through
+surfaces draw local and cross-monitor outlines in logical monitor coordinates.
+A two-second recovery poll handles missed events; it is not the animation clock.
+Visual preferences live outside the watched plugin directory.
 
 ## Monitor workspaces
 
@@ -42,9 +53,20 @@ or window focus does not swap workspaces. The C++ helper intercepts workspace
 requests and preserves spatial animation offsets during rapid reversals.
 
 The bar shows 1–5, occupied higher IDs, and the current workspace even when empty.
-No monitor-order file is used. Groups and camera state remain in memory and reset
-on configuration reload. The helper remains loaded across Lua reloads; the plugin
-sets its enabled state explicitly, and removal/update must unload the binary.
+No monitor-order file is used. The helper remains loaded across Lua reloads;
+the config declares its path on every generation and explicitly sets its enabled
+state. Bootstrap uses bounded native IPC to load before Lua evaluation, builds in
+the user cache, and rejects a conflicting loaded API. Changed native code is
+activated in a new compositor session, not by routine hot-unloading.
+
+## Settled checkpoints
+
+`layout/checkpoint.lua` captures only persistent arrangement data; `Service.qml`
+debounces change notifications for 1.5 seconds and runs `checkpoint.py` outside the
+compositor. The writer atomically saves bounded JSON with two older copies and
+skips identical data. Restoration is scoped to the running compositor, handles
+incremental window discovery, and retains unvisited workspace records.
+See [layout recovery](LAYOUT-RECOVERY.md) for fields, paths and failure limits.
 
 ## Code map
 
@@ -56,8 +78,12 @@ sets its enabled state explicitly, and removal/update must unload the binary.
 - `integration/plugin.lua`: layout/bootstrap guard and helper enable state.
 - `integration/omarchy.lua`: settings shortcut and layout bindings.
 - `integration/workspaces.lua`: shared workspace and monitor navigation.
-- `Service.qml`: service startup and settings IPC.
-- `Preview.qml`, `MinimapMotion.qml`: overview and minimap.
+- `Service.qml`: service startup, settings IPC and debounced checkpoint scheduling.
+- `layout/checkpoint.lua`, `checkpoint.py`: validated restoration and atomic saving.
+- `Preview.qml`, `MinimapSurface.qml`: overview, minimap and drag surfaces.
+- `MinimapMotion.qml`, `MinimapFitMotion.qml`, `OverviewMotion.js`: visual motion.
+- `MinimapLayout.js`: fit geometry and invalidation.
+- `PreviewStream.js`: bounded snapshot and gesture event transport.
 - `Customizer.qml`, `Settings.js`, `SettingsPreview.qml`: settings UI and defaults.
 - `Workspaces.qml`: shared workspace bar widget.
 - `validate-shortcuts.py`: readable keycode names and complete conflict reports.

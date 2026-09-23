@@ -2,9 +2,9 @@ import subprocess, json, time
 import sys
 INSTANCE=sys.argv[1]
 # Run only against an isolated compositor with this test monitor.
-assert 'HWTEST' in subprocess.check_output(['hyprctl','-i',INSTANCE,'-j','monitors'],text=True)
+assert 'HWTEST' in subprocess.check_output(['hyprctl','-i',INSTANCE,'-j','monitors'],text=True,timeout=5)
 def ctl(*args):
- r=subprocess.run(['hyprctl','-i',INSTANCE,*args],capture_output=True,text=True,check=True)
+ r=subprocess.run(['hyprctl','-i',INSTANCE,*args],capture_output=True,text=True,check=True,timeout=5)
  if 'error' in r.stdout.lower(): raise RuntimeError(r.stdout)
  return r.stdout
 def dispatch(expr): return ctl('dispatch',expr)

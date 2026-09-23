@@ -1,0 +1,32 @@
+local checkpoint=dofile('layout/checkpoint.lua')
+local core=dofile('layout/core.lua')
+local config=dofile('layout/config.lua')
+local state=core.new_state()
+core.sync(state,{'a','b','c'},'b',config)
+state.positions={a={col=-2,row=3,slot=2},b={col=-2,row=3,slot=1},c={col=4,row=-1,slot=1}}
+state.width_step_by_id.a=2;state.height_step_by_id.a=4;state.align_x_by_id.a=-1
+state.camera={col=-2,row=3,x=123,y=-55};state.zoom_value=.8
+local saved=checkpoint.capture(state)
+local fresh=core.new_state()
+-- Hyprland can initially expose just a subset and reorder targets on reload.
+core.sync(fresh,{'b'},'b',config)
+checkpoint.restore(saved,fresh,{'b'},config)
+core.sync(fresh,{'c','b','a'},'b',config)
+checkpoint.restore(saved,fresh,{'c','b','a'},config)
+assert(fresh.positions.a.col==-2 and fresh.positions.a.row==3 and fresh.positions.a.slot==2)
+assert(fresh.positions.b.slot==1 and fresh.positions.c.col==4)
+assert(fresh.width_step_by_id.a==2 and fresh.height_step_by_id.a==4 and fresh.align_x_by_id.a==-1)
+assert(fresh.camera.x==123 and fresh.camera.y==-55 and fresh.zoom_value==.8)
+fresh.positions.a.col=8
+checkpoint.restore(saved,fresh,{'a','b','c'},config)
+assert(fresh.positions.a.col==8,'restoration overwrote a subsequent user move')
+checkpoint.restore({windows={false,{1},{'new',0/0,1,1},{'new',1,1,999}}},fresh,{'new'},config)
+assert(not fresh.positions.new)
+assert(type(checkpoint.scope())=='string')
+local path=os.tmpname()
+local f=assert(io.open(path,'w'));f:write('{broken');f:close()
+f=assert(io.open(path..'.1','w'));f:write('{"version":1,"scope":"same","workspaces":{"workspace:9":{"windows":[]}}}');f:close()
+assert(checkpoint.load(path,'same')['workspace:9'])
+assert(next(checkpoint.load(path,'different'))==nil,'checkpoint leaked across compositor sessions')
+os.remove(path);os.remove(path..'.1')
+print('ok - checkpoint restores groups, sizes, camera and late windows once; corrupt-file fallback and session isolation')

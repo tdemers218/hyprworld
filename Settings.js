@@ -4,6 +4,7 @@ function sections() {
     return [
         {id:"minimap",title:"Minimap",icon:"view-grid-symbolic",description:"Your workspace at a glance."},
         {id:"overview",title:"Overview",icon:"view-fullscreen-symbolic",description:"Space to see, search, and arrange."},
+        {id:"effects",title:"Effects",icon:"preferences-system-symbolic",description:"Animation and rendering performance."},
         {id:"workflow",title:"Flow",icon:"input-mouse-symbolic",description:"Make navigation feel natural."},
         {id:"placement",title:"Placement paths",icon:"go-jump-symbolic",description:"Decide where the next window belongs."},
         {id:"groups",title:"Group layouts",icon:"view-split-left-right-symbolic",description:"Give every group a balanced arrangement."},
@@ -24,11 +25,23 @@ function fields() {
     toggle('minimap','Visibility','hideSingle','Hide with a single window',true);
     toggle('minimap','Visibility','hideMaxZoom','Hide at maximum zoom',true);
     toggle('minimap','Visibility','hideFullscreen','Hide while fullscreen',true);
-    choice('minimap','Position','corner','Anchor','top-left',['top-left','top-right','bottom-left','bottom-right']);
-    range('minimap','Position','x','Horizontal inset',12,0,1000,1,'px');
-    range('minimap','Position','y','Vertical inset',52,0,1000,1,'px');
-    range('minimap','Size','width','Maximum width',220,100,800,10,'px');
-    range('minimap','Size','height','Maximum height',140,60,600,10,'px');
+    choice('minimap','Placement','placementMode','Sizing mode','fixed',['fixed','fit']);
+    rows[rows.length-1].description='Fixed uses your reference size. Fit grows and shrinks up to its maximum width/height, staying inside the monitor and clear of the focused window.';
+    choice('minimap','Placement','corner','Anchor','top-left',['top-left','top-right','bottom-left','bottom-right']);
+    range('minimap','Placement','x','Horizontal inset',12,0,1000,1,'px');
+    range('minimap','Placement','y','Vertical inset',52,0,1000,1,'px');
+    range('minimap','Placement','fitMaxWidth','Fit maximum width',300,100,1200,10,'px');
+    range('minimap','Placement','fitMaxHeight','Fit maximum height',200,60,800,10,'px');
+    range('minimap','Size','width','Reference width',220,100,800,10,'px');
+    range('minimap','Size','height','Reference height',140,60,600,10,'px');
+    range('minimap','Placement','hideBelow','Hide below scale',35,0,100,1,'%',true);
+    rows[rows.length-1].description='In Fit mode, hide below this percentage of the reference size. Zero hides only when no space remains. Fit may grow beyond the reference size.';
+    choice('minimap','Appearance','style','Surface style','classic',['classic','elevated','glass','high-contrast']);
+    toggle('minimap','Effects','shadow','Soft shadow',false);
+    toggle('minimap','Effects','wallpaperBlur','Wallpaper blur',false,{description:'Blur a wallpaper texture inside the backdrop, not the application content behind it.'});
+    range('minimap','Effects','blurStrength','Wallpaper blur strength',.65,0,1,.05,'',true);
+    range('minimap','Effects','shadowOpacity','Shadow opacity',.35,0,1,.05,'',true);
+    range('minimap','Effects','surfaceRadius','Backdrop corner radius',10,0,32,1,'px',true);
     range('minimap','Appearance','opacity','Card opacity',.72,.1,1,.01);
     range('minimap','Appearance','lineWidth','Border width',1,0,6,1,'px');
     range('minimap','Appearance','radius','Corner radius',3,0,24,1,'px');
@@ -84,6 +97,10 @@ function fields() {
     range('workflow','Gestures','pinchSensitivity','Pinch sensitivity',1,.2,3,.1,'×',true);
     toggle('workflow','Gestures','touchpadEnabled','Enable touchpad actions',true);
     toggle('plugin','General','enabled','Enable Hyprworld',true);
+    toggle('effects','Performance','animations','Enable animations',true,{description:'Controls minimap, overview and Hyprworld workspace transitions. Does not disable unrelated application or desktop effects.'});
+    toggle('effects','Performance','postProcessing','Enable post-processing',true,{description:'Master switch for minimap blur, shadows and effect textures, including those supplied by styles.'});
+    toggle('effects','Post-processing','shadows','Allow shadows',true);
+    toggle('effects','Post-processing','blur','Allow wallpaper blur',true);
     return rows;
 }
 function shortcutRows() {
@@ -103,7 +120,7 @@ function shortcutRows() {
 }
 
 function defaults() {
-    var result={schemaVersion:2,minimap:{},overview:{},workflow:{},plugin:{},shortcuts:{},
+    var result={schemaVersion:2,minimap:{},overview:{},effects:{},workflow:{},plugin:{},shortcuts:{},
         placement:{enabled:false,scope:"all",workspaces:[],preset:"horizontal",fillHoles:true,overflow:"extend",nodes:[{col:0,row:0,capacity:1},{col:1,row:0,capacity:1}]},
         groups:{layouts:{"2":{mode:"columns",ratio:.5},"3":{mode:"master-left",ratio:.5},"4":{mode:"grid",ratio:.5}}},
         startup:{enabled:false,templates:[]}};
@@ -112,8 +129,11 @@ function defaults() {
     return result;
 }
 function normalize(raw) {
+    raw = raw && typeof raw === "object" ? raw : {};
     raw=raw||{};
     var result=defaults();
+    if ((raw.minimap||{}).placementMode === undefined && (raw.minimap||{}).shrinkToFit === true)
+        result.minimap.placementMode='fit';
     fields().forEach(function(f) {
         var v=(raw[f.section]||{})[f.key];
         if (v===undefined) return;
@@ -132,6 +152,7 @@ function normalize(raw) {
     result.placement.fillHoles=p.fillHoles!==false;
     if (['extend','repeat'].indexOf(p.overflow)>=0) result.placement.overflow=p.overflow;
     if (Array.isArray(p.nodes) && p.nodes.length) result.placement.nodes=p.nodes.slice(0,64).map(function(n) {
+        n = n && typeof n === "object" ? n : {};
         return {col:integer(n.col,-32,32,0),row:integer(n.row,-32,32,0),capacity:integer(n.capacity,1,4,1)};
     }).filter(function(n,i,a) { return a.findIndex(function(v) { return v.col===n.col && v.row===n.row; })===i; });
     [2,3,4].forEach(function(n) {
@@ -142,9 +163,10 @@ function normalize(raw) {
     var startup=raw.startup||{};
     result.startup.enabled=startup.enabled===true;
     if (Array.isArray(startup.templates)) result.startup.templates=startup.templates.slice(0,20).map(function(t,i) {
+        t = t && typeof t === "object" ? t : {};
         return {name:String(t.name||'Workspace '+(i+1)).slice(0,80),workspace:integer(t.workspace,1,10000,i+1),
             enabled:t.enabled!==false,monitor:String(t.monitor||'').slice(0,100),zoom:Math.max(.65,Math.min(1.25,Number(t.zoom)||1)),
-            apps:(Array.isArray(t.apps)?t.apps:[]).slice(0,32).map(function(a) {return {command:String(a.command||'').slice(0,2000),class:String(a.class||'').slice(0,200),
+            apps:(Array.isArray(t.apps)?t.apps:[]).slice(0,32).map(function(a) { a = a && typeof a === "object" ? a : {}; return {command:String(a.command||'').slice(0,2000),class:String(a.class||'').slice(0,200),
                 col:integer(a.col,-32,32,0),row:integer(a.row,-32,32,0)};})};
     });
     return result;

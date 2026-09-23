@@ -2,7 +2,8 @@
 
 The [shell plugin installation](../README.md#install) is the supported route for
 the complete interface. The alternatives below provide the Lua layout only;
-they do not start the QML service, minimap, overview UI, or settings controller.
+they do not start the QML service, minimap, overview UI, settings controller, or
+automatic checkpoint writer.
 Do not combine a manual/config installation with the shell plugin bootstrap.
 
 ## Config installer on Omarchy
@@ -44,15 +45,18 @@ Update with:
 ```sh
 git -C ~/.local/share/hyprworld pull --ff-only
 make -C ~/.local/share/hyprworld native
-hyprctl plugin unload ~/.local/share/hyprworld/native/build/shared-workspaces.so
 hyprctl reload
 hyprctl configerrors
 ```
 
+After changes to native code or Hyprland, save work and start a new compositor
+session to activate the rebuilt helper. Do not hot-unload the workspace hook as
+a routine update step. Config-only installations do not automatically save
+arrangements before reloads.
+
 Uninstall using the script before deleting or moving the checkout:
 
 ```sh
-hyprctl plugin unload ~/.local/share/hyprworld/native/build/shared-workspaces.so
 ~/.local/share/hyprworld/uninstall.sh
 ```
 
@@ -60,7 +64,8 @@ Removal also asks for confirmation; use `--yes` only when the removal has been
 explicitly approved in advance.
 
 It backs up the configuration and removes the marked block. The checkout and
-preferences remain available for recovery. For an alternate config file use
+preferences remain available for recovery. Start a new compositor session to
+finish removing native code from the process. For an alternate config file use
 `HYPRWORLD_HYPRLAND_CONFIG`; `HYPRWORLD_SKIP_RELOAD=1` suppresses reloads in both
 scripts. The installer's support for `XDG_CONFIG_HOME` selects the Hyprland
 config only; runtime preferences currently use `~/.config/omarchy`.

@@ -14,7 +14,8 @@ The Git history retains the upstream commits.
 **[Tristan Demers (tdemers218)](https://github.com/tdemers218)** maintains this independent fork. Fork development expands
 visible window groups, pointer gestures, overview/minimap, zoom, themed settings,
 shortcut validation, mouse focus, delayed compaction, shared workspace
-navigation, placement paths and startup templates. See [CHANGELOG.md](CHANGELOG.md) for the release boundary.
+navigation, placement paths, startup templates, continuous monitor drag outlines,
+smooth minimap fitting, settled-layout checkpoints and compatibility hardening. See [CHANGELOG.md](CHANGELOG.md) for the release boundary.
 
 Hyprworld is not an official release or endorsed successor of Hyprscroll2D,
 Hyprland, or Omarchy.

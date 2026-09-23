@@ -1,0 +1,44 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const stream = vm.createContext({});
+vm.runInContext(fs.readFileSync('PreviewStream.js','utf8').replace(/^\.pragma library\s*/, ''),stream);
+const output = fs.readFileSync(0,'utf8');
+const events = output.split('\n').filter(line=>line.startsWith('hyprworld-preview-part,'));
+const state = {}, snapshots = [];
+for (const event of events) {
+    assert.ok(Buffer.byteLength(event)<=1024);
+    const result = stream.accept(state,event);
+    if (result!==null) snapshots.push(JSON.parse(result));
+}
+assert.ok(snapshots.length>0);
+for (const frame of snapshots) assert.equal(frame.tiles.find(t=>t.address==='0xA').title,'雪😀, title '.repeat(220));
+const frames=output.split('\n').filter(line=>line.startsWith('hyprworld-drag,')).map(event=> {
+    assert.ok(Buffer.byteLength(event)<=1024);
+    const frame=JSON.parse(stream.accept({},event,'drag'));
+    assert.equal(frame.tiles,undefined);
+    return frame;
+});
+assert.equal(frames.length,20,'every pointer tick must deliver a complete frame without polling');
+assert.ok(frames.slice(0,10).every(f=>!f.gesture.drop?.monitor));
+assert.ok(frames.slice(10).every(f=>f.gesture.drop.monitor==='RIGHT'));
+assert.equal(new Set(frames.map(f=>f.gesture.ghost.x)).size,20);
+assert.equal(stream.accept({},'hyprworld-preview,{"ok":true}'),'{"ok":true}');
+const incomplete={};
+assert.equal(stream.accept(incomplete,'hyprworld-preview-part,e,1,1,2,{'),null);
+assert.equal(stream.accept(incomplete,'hyprworld-preview-part,e,2,1,2,{'),null);
+assert.equal(stream.accept(incomplete,'hyprworld-preview-part,e,2,1,2,{'),null);
+assert.equal(stream.accept(incomplete,'hyprworld-preview-part,e,2,2,2,}'),'{}');
+assert.equal(stream.accept({},'hyprworld-preview-part,e,3,1,999999,{}'),null);
+const qml=fs.readFileSync('Preview.qml','utf8');
+const accept=qml.slice(qml.indexOf('    function acceptGesture('),qml.indexOf('    property bool compactAnimating'));
+const receiver=vm.createContext({gestureFrame:{}});
+vm.runInContext(accept,receiver);
+receiver.acceptGesture({epoch:'a',revision:10,gesture:{mode:'move'}});
+receiver.acceptGesture({epoch:'a',revision:9,gesture:false});
+assert.equal(receiver.gestureFrame.gesture.mode,'move','stale poll replaced a newer drag frame');
+receiver.acceptGesture({epoch:'a',revision:11,gesture:false});
+assert.equal(receiver.gestureFrame.gesture,false);
+receiver.acceptGesture({epoch:'b',revision:1,gesture:{mode:'move'}});
+assert.equal(receiver.gestureFrame.gesture.mode,'move');
+console.log('ok - 20 compact drag frames, Unicode initial snapshots, stale-frame rejection and dropped-frame recovery');

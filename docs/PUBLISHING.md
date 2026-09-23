@@ -1,57 +1,96 @@
-# Publishing and maintaining the listing
+# Publishing Hyprworld 0.1.1
 
-Hyprworld uses the plugin ID `io.github.tdemers218.hyprworld` and repository
-`https://github.com/tdemers218/hyprworld`. Keep the manifest, widget module name,
-README commands and release tag consistent.
+The first update is prepared as **0.1.1** in `manifest.json` and
+[CHANGELOG.md](../CHANGELOG.md). It is not marked as published. Keep the plugin ID
+`io.github.tdemers218.hyprworld`, repository `https://github.com/tdemers218/hyprworld`,
+manifest version and release tag consistent. No publishing step is automatic.
 
-## Release checks
+## Completed checks for this candidate
 
-1. Run `make check`, `make native`, and `omarchy plugin validate .`.
-2. Run the [isolated compositor checks](../native/README.md), including native
-   helper disable behavior, plus settings Apply/Revert and startup launching.
-3. Run `python3 tests/live_package.py` for a fresh installation with the public
-   plugin ID. Build the native helper before enabling. Test update, migration and removal too.
-4. Review all tracked and untracked files. Commit the QML components, native
-   source, tests and current `preview.png`; exclude native build output,
-   temporary files, preferences from a real session, and logs.
-5. Match `manifest.json` version to [CHANGELOG.md](../CHANGELOG.md). Set the release
-   date when the release is actually published, then create the matching tag.
-6. Inspect `git remote -v` before pushing. This fork must be pushed to its own
-   repository, not the original Hyprscroll2D upstream.
+The documentation pass also passed `make check`, `omarchy plugin validate .`,
+local link/heading checks, release-version consistency and `git diff --check`.
 
-The GitHub workflow runs compositor-independent tests. It does not compile the
-native helper or certify compatibility with a new Hyprland version. Rebuild and
-repeat the live checks for each supported compositor upgrade.
+The September 23 implementation checks passed `make check`, the Qt Quick motion
+suite and the full isolated `tests/live_package.py` lifecycle test. Coverage
+includes native loading, settings opening, large Unicode event delivery,
+12 reloads retaining the native handle, three checkpoint resets including an
+inactive workspace, no unchanged-save rewrites, local/remote outlines, workspace
+swaps and native removal. The live source update restored ten existing windows
+exactly and retained the native helper. See [compatibility](COMPATIBILITY-AUDIT.md),
+[performance](PERFORMANCE-AUDIT.md) and [recovery](LAYOUT-RECOVERY.md) for limits.
 
-## Marketplace submission
+Earlier settings Apply/Revert and startup launching checks are documented in
+[the settings reference](SETTINGS-OVERHAUL.md). They are separate checks, not
+features exercised by every package-lifecycle run. CPU measurements predate the
+latest additions; there is no demonstrated overall CPU reduction for this release.
 
-Follow the [official publishing guide](https://plugins.omarchy.org/publish.html).
-The marketplace requires a public repository, valid root manifest, README,
-license, and safe installation/removal. A listing requires a separate submission
-and approval; a successful manifest validation alone does not publish anything.
+## Before publishing
 
-The optional config installer and uninstaller ask for confirmation before they
-change `hyprland.lua`. Their `--yes` flag is reserved for an explicitly approved
-scripted action; unattended runs without that flag fail before changing the file.
-The normal Omarchy plugin add, enable, disable, update, and remove commands do
-not use these scripts.
+1. Review `git status --short` and the complete diff, including new untracked
+   source/test files and `preview.png`. Include all new QML/JS, Lua and Python
+   dependencies. Exclude native build output, user preferences/checkpoints,
+   temporary files, logs and private screenshots. Do not stage the sibling local
+   audit directory.
+2. Run `make check` and `omarchy plugin validate .` on the final tree. For code
+   changes after the recorded checks, repeat `make native`, the Qt Quick motion
+   test and `python3 tests/live_package.py` as described in
+   [CONTRIBUTING.md](../CONTRIBUTING.md). Use only isolated sessions for live tests.
+3. Review installation, update, migration and removal instructions. Native code
+   changes need a new compositor session. Do not replace them with a routine
+   live-hook unload command. Only a same-session settled checkpoint can recover
+   an existing arrangement; the first upgrade from pre-checkpoint code has none.
+4. Set the actual publication date in the 0.1.1 changelog heading. Commit the
+   reviewed release tree to this fork. Inspect `git remote -v` before pushing;
+   do not push fork changes to Hyprscroll2D upstream.
+5. Push your reviewed branch and create the matching `v0.1.1` tag/release on your
+   repository. Use the changelog or release text below for the notes.
+6. Check the Omarchy listing points to this repository and reflects the new
+   manifest/README. Follow the marketplace's current maintenance/submission
+   process if a listing change is needed; pushing a tag does not itself establish
+   listing approval or immediate refresh.
 
-Suggested listing copy:
+GitHub CI runs compositor-independent checks. It does not compile the native
+helper, run QML rendering, or certify a new Hyprland version. Rebuild and repeat
+live checks for each supported compositor upgrade.
 
-> Hyprworld turns your desktop into a two-dimensional workspace. Arrange windows
-> in visible groups, find them in a searchable overview, and navigate with a
-> minimap, keyboard or touchpad. Design opening paths, choose group layouts, and
-> save startup workspace templates through themed visual settings.
+## Marketplace details
+
+The [official publishing guide](https://plugins.omarchy.org/publish.html)
+requires a public repository, root manifest, README, license and safe install/removal.
+For a new listing, submit the repository link, category and tags through its issue
+form; automated validation precedes maintainer approval. Marketplace validation
+is not a security audit. The guide was checked on September 23, 2026.
 
 Category: **Compositor**. Suggested tags: **Hyprland**, **workspaces**, **layout**,
 **overview**, **productivity**.
 
-Make the build requirement prominent in the listing: Omarchy 4.0.3 and Hyprland
-0.56.2 are the tested baseline; this plugin requires a C++23 native helper built
-against the exact running Hyprland version. It is an Omarchy Shell plugin, not a
-`hyprpm` package. Link the [installation](../README.md#install) and
-[migration](MIGRATING.md) instructions and retain upstream attribution.
+Suggested listing copy:
 
-The repository preview depicts current settings with sample data. Update it
-when the interface changes. Never submit screenshots containing private window
-titles, user paths, or messages.
+> A two-dimensional scrolling workspace for Hyprland on Omarchy. Arrange windows
+> in visible groups, search an animated overview, and navigate with a minimap,
+> keyboard or touchpad. Includes continuous cross-monitor drag outlines, smooth
+> minimap fit resizing, custom opening paths, group layouts and startup templates.
+> Automatic settled checkpoints recover open-window arrangements after plugin
+> resets within the same desktop session.
+
+Make the requirements visible: tested with **Omarchy 4.0.4, Hyprland 0.56.2
+(commit efb50993780079460b0cbed1363e2166a2de1d9f), Qt 6.11.2**. Requires the Lua
+layout API, Omarchy Shell, Python 3, a C++23 compiler, Make/pkgconf and exact-match
+Hyprland headers for the native helper. This is not a `hyprpm` package or a
+standalone Quickshell app. Link [installation](../README.md#install),
+[migration](MIGRATING.md) and [recovery limits](LAYOUT-RECOVERY.md); retain upstream
+attribution. The repository preview shows settings with sample data.
+
+## Suggested update announcement
+
+> **Hyprworld 0.1.1** adds automatic settled-layout checkpoints and smooth minimap
+> fit resizing. Open-window positions, groups, sizes, camera and zoom now recover
+> after plugin/config resets in the same compositor session. Drag outlines update
+> continuously within and across monitors, and equal-sized focus changes keep the
+> minimap stable. This update also hardens loading, reloads, settings and IPC, with
+> regression and isolated multi-monitor checks. Checkpoints do not restore after
+> logout or reboot. See the README for native-helper update requirements.
+
+The config installer/uninstaller ask before modifying `hyprland.lua`; `--yes`
+is for an intentionally unattended invocation. The normal Omarchy plugin lifecycle
+commands do not run those optional scripts.

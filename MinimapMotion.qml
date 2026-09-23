@@ -32,13 +32,14 @@ QtObject {
         animation.stop()
         fromFrame=frame
         destination=targetFrame
-        var snap=!signature || previousWorkspace!==workspace
+        var snap=duration<=0 || !signature || previousWorkspace!==workspace
         signature=nextSignature; previousWorkspace=workspace
         progress=snap ? 1 : 0
         render()
         if (!snap) animation.start()
     }
     onProgressChanged: render()
+    onDurationChanged: if (duration<=0) { animation.stop(); progress=1; render() }
     onTargetFrameChanged: Qt.callLater(update)
     onWorkspaceChanged: Qt.callLater(update)
 }

@@ -6,6 +6,20 @@ TestCase {
     name: "MinimapMotion"
     when: windowShown
     MinimapMotion { id: motion }
+    MinimapFitMotion { id: fit }
+    function fitTarget(size) { return {x:size,y:size/2,w:size,h:size/2,scale:size/100,visible:true} }
+    function test_fit_glides_and_retargets() {
+        fit.duration=0; fit.targetFrame=fitTarget(100);wait(30);fit.duration=300
+        fit.targetFrame=fitTarget(200);wait(80)
+        verify(fit.frame.w>100 && fit.frame.w<200)
+        fuzzyCompare(fit.frame.w/fit.frame.h,2,.00001)
+        var previous=fit.frame.w
+        fit.targetFrame=fitTarget(300);wait(1)
+        verify(fit.frame.w>=previous && fit.frame.w<300)
+        wait(380);compare(fit.frame.w,300);compare(fit.frame.scale,3)
+        fit.duration=0;fit.targetFrame=fitTarget(120);wait(30)
+        compare(fit.frame.w,120)
+    }
     function target(x,width) {
         return {width:width,height:100,tiles:{a:{x:x,y:0,w:20,h:30}}}
     }

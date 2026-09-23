@@ -46,13 +46,16 @@ class Keymap:
         class Names(C.Structure):
             _fields_ = [(k, C.c_char_p) for k in ("rules", "model", "layout", "variant", "options")]
         def option(key):
-            data = json.loads(subprocess.check_output(["hyprctl", "-j", "getoption", "input:kb_"+key], text=True))
+            data = json.loads(subprocess.check_output(["hyprctl", "-j", "getoption", "input:kb_"+key], text=True, timeout=10))
             value = str(data.get("str", ""))
             return None if value in ("", "[[EMPTY]]") else value.encode()
         names = Names(*(option(k) for k in ("rules", "model", "layout", "variant", "options")))
         self.ctx = lib.xkb_context_new(0)
+        if not self.ctx: raise ValueError("Could not create keyboard context.")
         self.map = lib.xkb_keymap_new_from_names(self.ctx, C.byref(names), 0)
-        if not self.map: raise ValueError("Could not load the current keyboard layout.")
+        if not self.map:
+            lib.xkb_context_unref(self.ctx)
+            raise ValueError("Could not load the current keyboard layout.")
         self.codes = {}
         for code in range(lib.xkb_keymap_min_keycode(self.map), lib.xkb_keymap_max_keycode(self.map)+1):
             for group in range(lib.xkb_keymap_num_layouts_for_key(self.map, code)):
@@ -157,7 +160,7 @@ def main():
             print(json.dumps(keymap.key_names()))
             return
         shortcuts = json.loads(sys.argv[1])
-        bindings = json.loads(subprocess.check_output(["hyprctl", "-j", "binds"], text=True))
+        bindings = json.loads(subprocess.check_output(["hyprctl", "-j", "binds"], text=True, timeout=10))
         print(json.dumps(inspect(shortcuts, bindings, keymap)))
     except (ValueError, OSError, subprocess.SubprocessError, IndexError) as error:
         print(json.dumps({"error": str(error), "conflicts": {}}))

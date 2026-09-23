@@ -16,16 +16,30 @@ Item {
     }
 
     property bool loadPending: false
-    readonly property string bootstrapPath: decodeURIComponent(
-        Qt.resolvedUrl("bootstrap.py").toString().replace(/^file:\/\//, "")
-    )
-
+    property bool checkpointPending: false
+    Timer {
+        id: checkpointTimer; interval: 1500
+        onTriggered: {
+            if (checkpointWriter.running) root.checkpointPending = true
+            else checkpointWriter.running = true
+        }
+    }
+    Process {
+        id: checkpointWriter
+        command: ["python3", decodeURIComponent(Qt.resolvedUrl("checkpoint.py").toString().replace(/^file:\/\//, ""))]
+        onExited: function(code) {
+            if (code === 75 || root.checkpointPending) {
+                root.checkpointPending = false; checkpointTimer.restart()
+            }
+        }
+        stderr: StdioCollector { onStreamFinished: if (text.trim()) console.warn(text.trim()) }
+    }
     function loadLayout() {
         if (loader.running) {
             root.loadPending = true
             return
         }
-        loader.command = ["python3", root.bootstrapPath]
+        loader.command = ["python3", decodeURIComponent(Qt.resolvedUrl("bootstrap.py").toString().replace(/^file:\/\//, ""))]
         loader.running = true
     }
 
@@ -40,6 +54,7 @@ Item {
 
         function onRawEvent(event) {
             if (event && event.name === "configreloaded") loadTimer.restart()
+            if (event && event.name === "custom" && event.data === "hyprworld-state") checkpointTimer.restart()
         }
     }
 
@@ -51,7 +66,10 @@ Item {
 
     Process {
         id: loader
-        onExited:function(code){if(code===0)startupTimer.restart()}
+        onExited: function(exitCode, exitStatus) {
+            if (exitCode === 0) { startupTimer.restart(); checkpointTimer.restart() }
+            else console.warn("Hyprworld: layout was not loaded; inspect bootstrap errors and retry after fixing build dependencies")
+        }
 
         onRunningChanged: {
             if (!running && root.loadPending) {
@@ -60,9 +78,6 @@ Item {
             }
         }
 
-        stdout: StdioCollector {
-            onStreamFinished: {var message=text.trim();if(message && message!=="ok")console.warn("Hyprworld:",message)}
-        }
         stderr: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
