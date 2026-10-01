@@ -47,7 +47,11 @@ Item {
     property bool advanced: false
     property string shortcutFilter: "all"
     readonly property var visibleFields: Settings.fields().filter(function(f) {
-        return (root.query.trim() ? Search.score(root.query,f)>=0 : f.section===root.sectionId) && (!f.advanced || root.advanced || !!root.query.trim())
+        // Choosing the custom animation feel reveals every curve.
+        var customCurves = f.section==="effects" && root.settings.effects && root.settings.effects.preset==="custom"
+        // Rows tied to a mode (e.g. the curve mode) only show in that mode.
+        var applies = !f.when || (root.settings[f.section] || {})[f.when.key] === f.when.value
+        return !f.hidden && applies && (root.query.trim() ? Search.score(root.query,f)>=0 : f.section===root.sectionId) && (!f.advanced || root.advanced || customCurves || !!root.query.trim())
     })
     readonly property var shortcutRows: Settings.shortcutRows().filter(function(r) {
         var entry={action:r.label,binding:root.displayShortcut(root.settings.shortcuts[r.id]),category:r.id.indexOf("pan")===0?"workspace":r.id,aliases:r.id.indexOf("move")===0?"swap group detach":""}
@@ -63,8 +67,15 @@ Item {
     }
     }
     function toggle() { opened = !opened }
+    function openSection(id) {
+        var index = sections.findIndex(function(s) { return s.id === id })
+        if (index >= 0) section = index
+        opened = true
+    }
     function update(group, key, value) {
         var next = JSON.parse(JSON.stringify(settings)); next[group][key] = value
+        if (group === "effects" && key === "preset") Object.assign(next.effects, Settings.presetValues(value) || {})
+        else if (group === "effects" && (/(Ms|Curve)$/.test(key) || ["zoomSmoothing","curveMode","durationScale"].indexOf(key) >= 0)) next.effects.preset = "custom"
         settings = next; status = ""; failed = false
         if(group==="shortcuts")clearConflicts()
     }
@@ -278,7 +289,7 @@ Item {
                                 Column {
                                     width:scroll.availableWidth;spacing:20;enabled:!root.busy
                                     SettingsPreview {visible:!card.wide && (root.sectionId==="minimap" || root.sectionId==="overview");width:parent.width;height:180;preferences:root.settings;overview:root.sectionId==="overview";wallpaper:root.wallpaper}
-                                    SettingsSwitch {visible:!root.query.trim() && ["minimap","overview","workflow"].indexOf(root.sectionId)>=0;text:"Advanced controls";checked:root.advanced;onToggled:root.advanced=checked}
+                                    SettingsSwitch {visible:!root.query.trim() && ["minimap","overview","workflow","effects"].indexOf(root.sectionId)>=0;text:"Advanced controls";checked:root.advanced;onToggled:root.advanced=checked}
                                     Repeater {
                                         model:root.visibleFields
                                         Column {

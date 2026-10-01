@@ -36,6 +36,32 @@ camera position. Fit geometry is retained across same-sized focus changes.
 from the current frame, so retargeting does not snap. Global animation settings
 and the minimap movement duration control this transition.
 
+The overview transition runs on linear time. Each element applies the overview
+curve to its own phase (`OverviewMotion.phase`), so the card cascade from the
+selected tile, staged labels and header motion keep the chosen curve without
+lengthening the duration. A four-finger swipe drives that timeline directly
+through a small `hyprworld-overview-swipe` event; on release the remaining
+motion animates from the finger position.
+
+Animation durations and curves come from the effects settings through
+`Settings.effective()`, which also applies the general curve mode. Curves are
+named or custom cubic beziers; QML uses bezier easing, and the Lua integration
+registers matching Hyprland curves for camera movement (`windowsMove`) and the
+workspace slide.
+
+Minimap styles: Base and Icons are drawn by the tile delegates; Constellation
+(`MinimapConstellation.qml`) draws a spanning tree of the window centres and
+animates focus along the tree path; Glass (`GlassBackdrop.qml`) rebuilds the
+backdrop from the wallpaper and live captures of only the windows under the
+minimap, blurs it at the configured radius and masks it to the cards, because
+Hyprland's layer blur has one global size.
+
+Launching an app from search asks the layout to predict the new window's box by
+running the real placement on a copy of the state (`core.predict_new`). The
+camera pans to that slot, the overlay draws a placeholder there, and focus
+changes to older windows are ignored briefly while the app maps and unmaps
+splash windows.
+
 Full snapshots use UTF-8-safe fragments with at most 900 payload bytes when they
 exceed the event budget. `PreviewStream.js` bounds and reassembles them, rejecting
 stale revisions. Pointer ticks publish a separate compact ghost/drop frame;
@@ -43,6 +69,29 @@ they do not rebuild the tile model or re-place real windows. Click-through
 surfaces draw local and cross-monitor outlines in logical monitor coordinates.
 A two-second recovery poll handles missed events; it is not the animation clock.
 Visual preferences live outside the watched plugin directory.
+
+## Touchpad
+
+Three-finger swipes call `swipe-begin`, `swipe-update` and `swipe-end`. The
+layout computes the camera shift to the neighbour the swipe would focus
+(`core.swipe_shift`), moves the camera by the finger progress with Hyprland's
+window animation paused and pointer focus held at click mode, then either
+focuses the neighbour (which lands where the preview ended) or restores the
+camera. Progress is signed by the first movement, so it works with either
+scroll direction.
+
+Four-finger left/right swipes (`workspace-swipe-*`) move the camera by up to
+30% of the monitor width with the fingers and fade windows through ten opacity
+steps by tagging them `hyprworld-fade-1`…`10`; window rules registered by
+`integration/omarchy.lua` map the tags to opacity, and removing a tag restores
+the window's own rules exactly. The focused window fades at most 35% while the
+fingers move. On release a 16 ms ticker (`workspace-swipe-tick`) runs the
+rest with the workspace curve (`layout/motion.lua`): the outgoing workspace
+slides and fades to invisible, its camera returns unseen, the destination is
+tagged invisible and offset to the other side, the shared workspace steps with
+Hyprland's own slide disabled, and the destination slides and fades in (focused
+window first). A cancel animates back. Focus events do not move the camera
+during the transition, and pointer focus is held at click mode.
 
 ## Monitor workspaces
 
@@ -74,6 +123,7 @@ See [layout recovery](LAYOUT-RECOVERY.md) for fields, paths and failure limits.
 - `layout/gestures.lua`: pointer gesture calculations.
 - `layout/init.lua`: Hyprland adapter, focus, events, and overview state.
 - `layout/preferences.lua`: layout preference access.
+- `layout/motion.lua`: animation curves and durations shared by Lua motion.
 - `bootstrap.py`: explicit native plugin loading before Lua evaluation.
 - `integration/plugin.lua`: layout/bootstrap guard and helper enable state.
 - `integration/omarchy.lua`: settings shortcut and layout bindings.
@@ -90,7 +140,10 @@ See [layout recovery](LAYOUT-RECOVERY.md) for fields, paths and failure limits.
 - `ArrangementEditor.qml`, `StartupEditor.qml`: visual placement and startup editors.
 - `SettingsIcon.qml`: theme-colored Canvas icons.
 - `startup.py`: capture, matching, launching and per-session startup guard.
-- `integration/touchpad.lua`: touchpad gesture translation.
+- `integration/touchpad.lua`: touchpad gesture translation and live swipes.
+- `Search.js`: fuzzy search, launchable apps and window state details.
+- `CurveEditor.qml`: visual animation curve editor used by the settings rows.
+- `GlassBackdrop.qml`, `MinimapConstellation.qml`: Glass and Constellation minimap styles.
 - `native/shared-workspaces.cpp`: workspace interception and swap animation.
 
 See the README for current controls and CONTRIBUTING.md for verification.

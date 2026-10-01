@@ -11,9 +11,11 @@ QtObject {
     property string signature: ""
     property real progress: 1
     property int duration: 300
+    property int easingType: Easing.OutCubic
+    property var bezierCurve: []
     property NumberAnimation animation: NumberAnimation {
         target: motion; property: "progress"; from: 0; to: 1
-        duration: motion.duration; easing.type: Easing.OutCubic
+        duration: motion.duration; easing.type: motion.easingType; easing.bezierCurve: motion.bezierCurve
     }
     function blend(a,b,p) { return a+(b-a)*p }
     function render() {

@@ -1,8 +1,86 @@
 # Changelog
 
-## Hyprworld 0.1.1 — prepared for release
+## Hyprworld 0.2.0 - 2026-10-01
 
-First update to Hyprworld. Set the publication date when releasing.
+### Added
+
+- Launch apps from overview search. Installed apps that match the query and
+  have no open window appear as **Launch** cards (setting, on by default). A
+  themed, pulsing placeholder appears where the new window will land; the
+  camera pans to that slot first, so the window opens without moving anything.
+- Search results are preview cards in a grid instead of a text list; arrows
+  move through the grid. Result cards grow in and glide when the list reflows.
+- Window state details on overview and search cards: floating, fullscreen,
+  pinned, tabbed, video or game content, keeping awake, hidden and XWayland
+  (setting, on by default). Equal search matches list recent windows first.
+- Workspace arrows in the overview for switching with the mouse; they hide
+  while searching.
+- A more immersive overview transition, all following the overview curve:
+  cards cascade out from the selected window and fold back into it, labels
+  fade in as cards land, the header and arrows slide in, the wallpaper settles
+  from a slight zoom with an adjustable blur, and a ring pulses once around the
+  selected card. Each part has a setting; reduced motion turns movement off.
+- Animation settings in **Effects**: presets (smooth, snappy, gentle, bouncy,
+  instant) and, under advanced or with **custom**, a visual curve editor with
+  draggable control points and a preview for every animation. **General**
+  curve mode shapes all animations with one curve and a speed multiplier.
+  Covers the overview, its workspace switch, tile movement, compaction,
+  minimap movement and fade, focus highlight, camera movement, Hyprland's
+  workspace slide, the launch pulse, constellation travel and zoom response.
+- Minimap styles: **Base**, **Glass** (each card gets its own blurred backdrop,
+  10 px by default, adjustable), **Constellation** (glowing stars joined by
+  links; the focus glow travels along them) and **Icons** (one large app icon
+  per window).
+- Live touchpad swipes (setting, on by default). Three fingers move the camera
+  with the swipe and spring back when too short; four fingers up/down drive the
+  overview transition; four fingers left/right slide the workspace with the
+  fingers while its windows fade (the focused one only slightly). On release
+  the workspace slides and fades out completely, the switch happens, and the
+  destination slides in from the other side and fades in, focused window
+  first, so the two workspaces are never visible together. Short swipes slide
+  and fade back. New **Swipe commit distance** and **Full swipe distance**.
+- `openCustomizerSection` IPC call to open settings on a given page.
+- A small workspace trace log (`~/.local/state/hyprworld/workspace-trace.log`,
+  capped at 64 KB) to diagnose an intermittent jump to workspace 10.
+
+### Changed
+
+- Animation durations and overview easing moved from Minimap/Overview to
+  Effects; saved values migrate and mark the feel as custom when they differ.
+- Minimap styles Classic, Elevated and High contrast now map to Base.
+- **Swipe threshold** is now **Swipe commit distance**; its default rose from
+  40 to 90. Saved values are kept.
+- Hyprland's workspace animation (keyboard and bar switching) is a full
+  **slide** instead of **slidefade**, which stopped part of the way and cut to
+  the next workspace.
+
+### Fixed
+
+- Selecting a window in the overview with the arrow keys and Enter could leave
+  Hyprland focus and the camera on the old window while the minimap showed the
+  selection. The focus request is now sent once the overview has released the
+  keyboard and retried until it lands.
+- Search + Enter did nothing or failed to focus the result, on the current and
+  on other workspaces.
+- Closing the focused window could leave focus nowhere, with the minimap
+  highlighting an arbitrary window and the camera not following. The nearest
+  neighbour now receives focus and the camera follows it.
+- Apps that open and close splash windows while starting pulled focus and the
+  camera back through older windows.
+- Two quick swipes could leave pointer focus in click mode, and the plugin's
+  own pointer handling could re-enable hover focus mid-swipe.
+
+### Known limitations
+
+- Four-finger workspace swipes with the overview open, or on an empty
+  workspace, act once on release rather than fading live.
+- Glass keeps live captures of the windows under the minimap while shown.
+- The intermittent jump to workspace 10 is not yet explained; the trace log
+  records the evidence for the next occurrence.
+
+## Hyprworld 0.1.1 - 2026-09-23
+
+First update to Hyprworld.
 
 ### Added
 

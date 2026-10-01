@@ -121,6 +121,8 @@ function M.sync(state, ids, active_id, config)
         end
     end
 
+    -- Remember where a closed focused window was so its neighbour inherits focus.
+    local lost = state.focused_id and not present[state.focused_id] and state.positions[state.focused_id]
     local removed = false
     for id in pairs(state.positions) do
         if not present[id] then
@@ -193,9 +195,20 @@ function M.sync(state, ids, active_id, config)
         state.observed_active_id = active_id
         state.focused_id = active_id
     elseif not state.focused_id or not present[state.focused_id] then
-        state.focused_id = unique_ids[1]
+        local nearest, best = unique_ids[1], math.huge
+        if lost then
+            for _, id in ipairs(unique_ids) do
+                local p = state.positions[id]
+                local distance = p and math.abs(p.col - lost.col) + math.abs(p.row - lost.row) or math.huge
+                if distance < best then nearest, best = id, distance end
+            end
+        end
+        state.focused_id = nearest
         state.observed_active_id = state.focused_id
         focus_changed = state.focused_id ~= nil
+        -- Nothing in the compositor owns focus after the close; the adapter
+        -- must focus this window and the camera must follow it.
+        if lost and nearest then state.refocus_id = nearest; M.follow(state) end
     end
     if state.pending_focus_id and not present[state.pending_focus_id] then
         state.pending_focus_id = state.focused_id
@@ -513,7 +526,7 @@ function M.advance_zoom(state)
         state.zoom_overview = nil
         return false
     end
-    state.zoom_value = state.zoom_value+difference*0.25
+    state.zoom_value = state.zoom_value+difference*(state.zoom_smoothing or 0.25)
     return true
 end
 
@@ -538,6 +551,55 @@ function M.toggle_maximize(state, config)
         state.align_x_by_id[member], state.align_y_by_id[member] = 0, 0
     end
     return true
+end
+
+local function copy(value, seen)
+    if type(value) ~= "table" then return value end
+    if seen[value] then return seen[value] end
+    local result = {}
+    seen[value] = result
+    for k, v in pairs(value) do result[k] = copy(v, seen) end
+    return result
+end
+
+-- Camera pixel shift that previews focusing the neighbour in `direction`:
+-- adding it to camera.x/y places every window where following that
+-- neighbour will. Returns nil when there is no neighbour.
+function M.swipe_shift(state, area, config, direction)
+    local id = M.focus(state, direction)
+    local ref = state.focused_id
+    if not id or not ref then return nil end
+    local before = M.placements(state, area, config)[ref]
+    local trial = copy(state, {})
+    trial.on_move = nil
+    trial.focused_id = id
+    M.follow(trial)
+    local after = M.placements(trial, area, config)[ref]
+    if not before or not after then return nil end
+    return id, after.x - before.x, after.y - before.y
+end
+
+-- Box the next mapped window will occupy: run the real sync on a copy, give
+-- the new window focus as Hyprland does, and follow it with the camera unless
+-- it is already fully visible (matching the adapter's focus handler).
+-- Also returns the camera that shows it, so a launch can pan there early.
+function M.predict_new(state, area, config)
+    local trial = copy(state, {})
+    trial.on_move = nil
+    local id = "prediction:new"
+    local ids = {}
+    for _, existing in ipairs(state.ids or {}) do ids[#ids + 1] = existing end
+    ids[#ids + 1] = id
+    M.sync(trial, ids, nil, config)
+    trial.focused_id = id
+    local box = M.placements(trial, area, config)[id]
+    local visible = box and box.x >= area.x - 1 and box.y >= area.y - 1
+        and box.x + box.w <= area.x + area.w + 1 and box.y + box.h <= area.y + area.h + 1
+    if not visible then
+        M.follow(trial)
+        box = M.placements(trial, area, config)[id]
+    end
+    return box, trial.camera
 end
 
 function M.placements(state, area, config)

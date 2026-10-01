@@ -24,7 +24,9 @@ _G.o = {
 _G.hl = {
     config = function(options) assert(options.binds.scroll_event_delay == 0) end,
     curve = function() end,
-        animation = function(options) assert(options.style == "slidefade" and options.enabled) end,
+        animation = function(options)
+            assert(options.enabled and (options.leaf == "windowsMove" or options.style == "slide"))
+        end,
     bind = function(keys, action, options)
         bindings[keys] = action
         return {set_enabled=function() end}

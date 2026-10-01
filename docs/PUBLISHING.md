@@ -1,11 +1,15 @@
-# Publishing Hyprworld 0.1.1
+# Publishing Hyprworld 0.2.0
 
-The first update is prepared as **0.1.1** in `manifest.json` and
-[CHANGELOG.md](../CHANGELOG.md). It is not marked as published. Keep the plugin ID
+The second update is prepared as **0.2.0** in `manifest.json` and
+[CHANGELOG.md](../CHANGELOG.md). Keep the plugin ID
 `io.github.tdemers218.hyprworld`, repository `https://github.com/tdemers218/hyprworld`,
 manifest version and release tag consistent. No publishing step is automatic.
 
 ## Completed checks for this candidate
+
+The 0.2.0 tree passed `make check` and `omarchy plugin validate .` on
+October 1, 2026. The native helper, Qt Quick motion suite and
+`tests/live_package.py` were not re-run for 0.2.0; the checks below are from 0.1.1.
 
 The documentation pass also passed `make check`, `omarchy plugin validate .`,
 local link/heading checks, release-version consistency and `git diff --check`.
@@ -39,10 +43,10 @@ latest additions; there is no demonstrated overall CPU reduction for this releas
    changes need a new compositor session. Do not replace them with a routine
    live-hook unload command. Only a same-session settled checkpoint can recover
    an existing arrangement; the first upgrade from pre-checkpoint code has none.
-4. Set the actual publication date in the 0.1.1 changelog heading. Commit the
+4. Check the publication date in the 0.2.0 changelog heading. Commit the
    reviewed release tree to this fork. Inspect `git remote -v` before pushing;
    do not push fork changes to Hyprscroll2D upstream.
-5. Push your reviewed branch and create the matching `v0.1.1` tag/release on your
+5. Push your reviewed branch and create the matching `v0.2.0` tag/release on your
    repository. Use the changelog or release text below for the notes.
 6. Check the Omarchy listing points to this repository and reflects the new
    manifest/README. Follow the marketplace's current maintenance/submission
@@ -83,13 +87,13 @@ attribution. The repository preview shows settings with sample data.
 
 ## Suggested update announcement
 
-> **Hyprworld 0.1.1** adds automatic settled-layout checkpoints and smooth minimap
-> fit resizing. Open-window positions, groups, sizes, camera and zoom now recover
-> after plugin/config resets in the same compositor session. Drag outlines update
-> continuously within and across monitors, and equal-sized focus changes keep the
-> minimap stable. This update also hardens loading, reloads, settings and IPC, with
-> regression and isolated multi-monitor checks. Checkpoints do not restore after
-> logout or reboot. See the README for native-helper update requirements.
+> **Hyprworld 0.2.0** makes the overview and touchpad feel live. Search can
+> launch apps straight into a predicted slot, results are preview cards, and the
+> overview opens with a cascading transition. Three- and four-finger swipes now
+> follow your fingers for the camera, overview and workspace switching. Effects
+> gains animation presets and a visual curve editor, and the minimap adds Glass,
+> Constellation and Icons styles. Focus fixes cover overview selection, closing
+> the focused window and apps with splash screens. See the changelog for details.
 
 The config installer/uninstaller ask before modifying `hyprland.lua`; `--yes`
 is for an intentionally unattended invocation. The normal Omarchy plugin lifecycle

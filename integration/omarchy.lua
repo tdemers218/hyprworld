@@ -112,15 +112,42 @@ for _, dir in ipairs({"left", "right", "up", "down"}) do
         "Resize " .. dir, "resize " .. dir)
 end
 -- Keep the saved shortcut IDs compatible while repurposing camera keys.
-if hl.curve then hl.curve("hyprworldEaseOutQuint", {type="bezier",points={{0.23,1},{0.32,1}}}) end
-_G.__hyprworld_apply_effects=function(enabled)
-    hl.animation({leaf="workspaces",enabled=enabled~=false,speed=3.5,bezier="hyprworldEaseOutQuint",style="slidefade"})
-end
+-- Same curves as Settings.js (layout/motion.lua); elastic and bounce use the
+-- overshoot curve in Hyprland.
+local effect_preferences, motion
 do
     local directory=debug.getinfo(1,"S").source:sub(2):match("^(.*)/[^/]+$")
-    local effects=dofile(directory.."/../layout/preferences.lua").section("effects")
-    _G.__hyprworld_apply_effects(effects.animations~=false)
+    effect_preferences=dofile(directory.."/../layout/preferences.lua")
+    motion=dofile(directory.."/../layout/motion.lua")
 end
+local effect_curves=motion.CURVES
+if hl.curve then
+    for name,p in pairs(effect_curves) do hl.curve("hyprworld-"..name,{type="bezier",points={{p[1],p[2]},{p[3],p[4]}}}) end
+end
+-- Hyprland curve name for a saved curve: a named one, or a custom
+-- "bezier:x1,y1,x2,y2" registered under this animation's own name.
+local function effect_curve(value,id,fallback)
+    if effect_curves[value] then return "hyprworld-"..value end
+    if value=="elastic" or value=="bounce" then return "hyprworld-overshoot" end
+    if tostring(value or ""):match("^bezier:") and hl.curve then
+        local p=motion.points(value)
+        hl.curve("hyprworld-custom-"..id,{type="bezier",points={{p[1],p[2]},{p[3],p[4]}}})
+        return "hyprworld-custom-"..id
+    end
+    return "hyprworld-"..fallback
+end
+local effective=motion.effective
+_G.__hyprworld_apply_effects=function(enabled)
+    local effects=effect_preferences.section("effects")
+    local workspace_ms,workspace_curve=effective(effects,"workspace",350)
+    hl.animation({leaf="workspaces",enabled=enabled~=false and workspace_ms>0,speed=math.max(.1,workspace_ms/100),
+        bezier=effect_curve(workspace_curve,"workspace","out-quint"),style="slide"})
+    -- Camera movement is Hyprland moving the tiled windows.
+    local camera_ms,camera_curve=effective(effects,"camera",380)
+    hl.animation({leaf="windowsMove",enabled=enabled~=false and camera_ms>0,speed=math.max(.1,camera_ms/100),
+        bezier=effect_curve(camera_curve,"camera","out-quint")})
+end
+_G.__hyprworld_apply_effects(effect_preferences.section("effects").animations~=false)
 for _, spec in ipairs({{id="panLeft",key="LEFT",delta="r-1",label="Previous workspace"},
     {id="panRight",key="RIGHT",delta="r+1",label="Next workspace"}}) do
     local key=customizer_shortcut(spec.id,"SUPER + CTRL + "..spec.key)
@@ -203,10 +230,56 @@ for _, spec in ipairs({{button="272",mode="move"},{button="274",mode="pan"}}) do
         elseif _G.__hyprworld_end_gesture then _G.__hyprworld_end_gesture() end
     end, {release=true, ignore_mods=true, non_consuming=true})
 end
+local overview_swipe_closing=false
+-- Ten opacity steps for the workspace swipe's fade out and fade in. Removing
+-- a tag restores the window's own opacity rules exactly.
+if hl.window_rule then
+    for level=1,10 do
+        pcall(hl.window_rule,{match={tag="hyprworld-fade-"..level},opacity=string.format("%.1f",1-level*0.1)})
+    end
+end
 if hl.gesture then
     local directory=debug.getinfo(1,"S").source:sub(2):match("^(.*)/[^/]+$")
     dofile(directory.."/touchpad.lua").install(hl, {
         focus=function(direction) route("focus "..direction,nil,direction=="up" and "-1" or direction=="down" and "1" or nil)() end,
+        -- Live camera swipes; an open launcher still takes up/down on release.
+        swipeBegin=function(direction)
+            if not is_hyprworld_active() then return false end
+            hl.dispatch(hl.dsp.layout("swipe-begin "..direction))
+            return true
+        end,
+        swipeUpdate=function(progress) hl.dispatch(hl.dsp.layout(string.format("swipe-update %.4f", progress))) end,
+        -- The overview transition follows the fingers; the overlay reads the
+        -- progress from a small custom event. Either direction toggles it.
+        overviewSwipeBegin=function()
+            if not is_hyprworld_active() then return false end
+            overview_swipe_closing=_G.__hyprworld_overview_active and _G.__hyprworld_overview_active() or false
+            return true
+        end,
+        overviewSwipeUpdate=function(progress)
+            local value=overview_swipe_closing and 1-progress or progress
+            hl.dispatch(hl.dsp.event(string.format("hyprworld-overview-swipe,%.4f",math.max(0,math.min(1,value)))))
+        end,
+        overviewSwipeEnd=function(_, commit)
+            if commit then toggle_overview() end
+            hl.dispatch(hl.dsp.event("hyprworld-overview-swipe,-1"))
+        end,
+        -- Live workspace swipe: fades the non-focused windows, then Hyprland's
+        -- full workspace slide. Empty workspaces and an open overview use the
+        -- one-shot step, which also carries the overview along.
+        workspaceSwipeBegin=function(direction)
+            if not is_hyprworld_active() or not hl.get_active_window() then return false end
+            if _G.__hyprworld_overview_active and _G.__hyprworld_overview_active() then return false end
+            hl.dispatch(hl.dsp.layout("workspace-swipe-begin "..(direction=="left" and "-1" or "1")))
+            return true
+        end,
+        workspaceSwipeUpdate=function(progress) hl.dispatch(hl.dsp.layout(string.format("workspace-swipe-update %.4f", progress))) end,
+        workspaceSwipeEnd=function(_, commit) hl.dispatch(hl.dsp.layout("workspace-swipe-end "..(commit and "commit" or "cancel"))) end,
+        swipeEnd=function(direction, commit)
+            local delta=direction=="up" and "-1" or direction=="down" and "1" or nil
+            if commit and delta and launcher_handled(delta) then commit=false end
+            hl.dispatch(hl.dsp.layout("swipe-end "..(commit and "commit" or "cancel")))
+        end,
         workspace=function(delta) if workspace_nav then workspace_nav.step(delta) end end,
         overview=toggle_overview,
         zoom=function(delta) if is_hyprworld_active() then hl.dispatch(hl.dsp.layout("zoom-pinch "..tostring(delta))) end end,

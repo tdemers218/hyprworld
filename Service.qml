@@ -13,6 +13,8 @@ Item {
         function toggleCustomizer(): void { customizer.toggle() }
         function openCustomizer(): void { customizer.opened = true }
         function closeCustomizer(): void { customizer.opened = false }
+        // Open settings on a page by id, e.g. "effects".
+        function openCustomizerSection(id: string): void { customizer.openSection(id) }
     }
 
     property bool loadPending: false

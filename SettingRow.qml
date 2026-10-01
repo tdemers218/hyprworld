@@ -54,6 +54,31 @@ Column {
             onEditingFinished:if(acceptableInput)root.edited(root.field.key,text)
         }
     }
+    Loader {
+        // Curve rows also carry their animation's duration.
+        width: parent.width
+        active: root.field.type === "curve"
+        visible: active
+        sourceComponent: CurveEditor {
+            // The general curve pairs with a speed multiplier instead of a duration.
+            readonly property bool general: !!root.field.durationScaleKey
+            readonly property real scale: Number(root.preferences[root.field.durationScaleKey]) || 1
+            width: parent ? parent.width : 0
+            value: String(root.current || "out-cubic")
+            duration: general ? Math.round(360 * scale) : Number(root.preferences[root.field.durationKey]) || 0
+            sliderValue: general ? scale : duration
+            sliderFrom: general ? 0.25 : 0
+            sliderTo: general ? 3 : root.field.max || 1500
+            sliderStep: general ? 0.05 : 10
+            sliderText: general ? scale.toFixed(2) + "× time" : duration + " ms"
+            options: root.field.options || []
+            onCurveEdited: function(value) { root.edited(root.field.key, value) }
+            onSliderEdited: function(value) {
+                if (general) root.edited(root.field.durationScaleKey, value)
+                else root.edited(root.field.durationKey, Math.round(value))
+            }
+        }
+    }
     Flow {
         width: parent.width; spacing: 6; visible: root.field.type === "choice"
         Repeater {

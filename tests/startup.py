@@ -31,4 +31,26 @@ class StartupTests(unittest.TestCase):
  def test_quote_cannot_escape_lua_string(self):
   self.assertEqual(m.quote('"\\\n'), '"\\034\\092\\010"')
   self.assertNotIn('";os.execute',m.quote('";os.execute("test")'))
+ def test_runtime_dir_rejects_foreign_or_open_dirs(self):
+  import os,tempfile
+  with tempfile.TemporaryDirectory() as d:
+   old=os.environ.get('XDG_RUNTIME_DIR');os.environ['XDG_RUNTIME_DIR']=d
+   try:
+    path=m.runtime_dir();self.assertEqual(os.stat(path).st_mode&0o777,0o700)
+    os.chmod(path,0o777)
+    with self.assertRaises(RuntimeError): m.runtime_dir()
+    os.chmod(path,0o700);os.rmdir(path);os.symlink(d,path)
+    with self.assertRaises(RuntimeError): m.runtime_dir()
+   finally:
+    if old is None: os.environ.pop('XDG_RUNTIME_DIR',None)
+    else: os.environ['XDG_RUNTIME_DIR']=old
+ def test_lock_never_truncates_or_follows_symlinks(self):
+  import os,tempfile
+  with tempfile.TemporaryDirectory() as d:
+   victim=Path(d)/'victim';victim.write_text('keep')
+   os.symlink(victim,Path(d)/'lock')
+   with self.assertRaises(OSError): m.open_lock(Path(d)/'lock')
+   self.assertEqual(victim.read_text(),'keep')
+   with m.open_lock(victim): pass
+   self.assertEqual(victim.read_text(),'keep')
 if __name__=='__main__':unittest.main()

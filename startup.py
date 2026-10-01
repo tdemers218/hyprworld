@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Launch saved workspace templates; capture never guesses executable commands."""
-import argparse, fcntl, hashlib, json, os, re, subprocess, sys
+import argparse, fcntl, hashlib, json, os, re, stat, subprocess, sys
 from pathlib import Path
 
 def quote(value):
@@ -41,6 +41,20 @@ def launch(template,clients,used=None):
         else: raise ValueError('Add a launch command for '+cls+' or open it before launching this template')
     return launched
 
+def runtime_dir():
+    """Private per-user state dir; refuses anything another user could have planted (the /tmp fallback is shared)."""
+    path=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')/('hyprworld-startup-'+str(os.getuid()))
+    try: os.mkdir(path,0o700)
+    except FileExistsError: pass
+    st=os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
+        raise RuntimeError('Refusing unsafe startup state directory '+str(path))
+    return path
+
+def open_lock(path):
+    # No O_TRUNC and no symlink following: the lock file's contents are never written.
+    return os.fdopen(os.open(path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o600),'r+')
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('action',choices=['capture','launch','autostart']);parser.add_argument('--settings',default=str(Path.home()/'.config/omarchy/hyprworld.json'));parser.add_argument('--index',type=int,default=0)
     args=parser.parse_args()
@@ -49,9 +63,8 @@ def main():
     if args.action=='autostart' and (not startup.get('enabled') or not settings.get('plugin',{}).get('enabled',True)): return
     templates=startup.get('templates',[])
     if args.action=='launch': templates=[templates[args.index]]
-    runtime=Path(os.environ.get('XDG_RUNTIME_DIR','/tmp'))/('hyprworld-startup-'+str(os.getuid()))
-    runtime.mkdir(mode=0o700,exist_ok=True)
-    with (runtime/'lock').open('w') as lock:
+    runtime=runtime_dir()
+    with open_lock(runtime/'lock') as lock:
         try: fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             if args.action=='autostart': return

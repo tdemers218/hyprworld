@@ -1,5 +1,8 @@
 .PHONY: test check native
 
+# Tests exercise workspace navigation; keep them out of the live trace log.
+export HYPRWORLD_TRACE_LOG := /dev/null
+
 native:
 	bash native/build.sh
 

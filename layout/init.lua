@@ -19,6 +19,7 @@ local core = load_relative("core.lua")
 local preferences = load_relative("preferences.lua")
 local gestures = load_relative("gestures.lua")
 local checkpoint = load_relative("checkpoint.lua")
+local motion = load_relative("motion.lua")
 local checkpoint_scope = checkpoint.scope()
 local state_home = os.getenv("XDG_STATE_HOME")
 if not state_home or state_home == "" then state_home = (os.getenv("HOME") or "") .. "/.local/state" end
@@ -149,6 +150,7 @@ local function context(ctx)
             if not applies then state.placement=nil end
         end
         state.group_layouts=section('groups').layouts
+        state.zoom_smoothing=math.max(.05,math.min(1,tonumber(section('effects').zoomSmoothing) or .25))
         state.compact_on_close=flow.compactOnClose~=false
         state.compact_on_move=flow.compactOnMove~=false
         state.preserve_focus=flow.preserveFocus==true
@@ -159,7 +161,18 @@ local function context(ctx)
         config.width_steps={w*.5/.85,w*.67/.85,w,1}
         config.height_steps={h*.5/.85,h*.67/.85,h,1}
     end
+    local fresh = {}
+    for _, id in ipairs(ids) do if not state.positions[id] then fresh[#fresh + 1] = id end end
     core.sync(state, ids, active_id, config)
+    -- Windows mapped while a launch is settling belong to the launched app.
+    if state.launch_until and #fresh > 0 then
+        state.launch_windows = state.launch_windows or {}
+        for _, id in ipairs(fresh) do
+            state.launch_windows[id] = true
+            state.launch_last = descriptors[id] and descriptors[id].address or state.launch_last
+        end
+        state.launch_until = os.time() + 2
+    end
     checkpoint.restore(restored_workspaces[key], state, ids, config)
     if preferences.section then
         state.template_placed=state.template_placed or {}
@@ -262,6 +275,7 @@ local function place_state(ctx, state, descriptors)
     snapshots[workspace_key(ctx)] = { tiles = tiles, overview = state.overview, compactSerial=state.compact_serial or 0,
         workspaceId = tonumber(workspace_key(ctx):match("workspace:(.+)")), slideDirection=state.slideDirection or 0, slideDirectionY=state.slideDirectionY or 0,
         commitAddress = state.pending_focus_id and descriptors[state.pending_focus_id] and descriptors[state.pending_focus_id].address or "",
+        launchBox = state.launch_box, launchSerial = state.launch_serial or 0,
         zoom = core.zoom_value(state, config), maxZoom = config.zoom_steps[#config.zoom_steps],
         cameraCol = state.camera.col, cameraRow = state.camera.row, area = ctx.area,
         monitorX = safe_field(monitor, "x") or 0, monitorY = safe_field(monitor, "y") or 0,
@@ -274,10 +288,12 @@ local function place_state(ctx, state, descriptors)
     if publish_snapshot then publish_snapshot(snapshots[workspace_key(ctx)]) end
 end
 
-local function focus_descriptor(ctx, state, descriptors, descriptor)
+local function focus_descriptor(ctx, state, descriptors, descriptor, commit)
     if not descriptor or not descriptor.address then return end
     local active = hl.get_active_window()
-    if active and not same_workspace(active, descriptor.window) then return end
+    -- A committed overview selection belongs to this workspace even when the
+    -- layer release refocused a window elsewhere.
+    if not commit and active and not same_workspace(active, descriptor.window) then return end
 
     -- Hyprland's focus dispatcher selects a monitor from the destination's
     -- geometry, even with cursor:no_warps. Set the camera and placement goals
@@ -291,8 +307,96 @@ end
 local function recalculate(ctx)
     local state, descriptors = context(ctx)
     place_state(ctx, state, descriptors)
+    local refocus = state.refocus_id and descriptors[state.refocus_id]
+    state.refocus_id = nil
+    if refocus and refocus.address and not state.overview and not state.pending_focus_id and hl.timer then
+        -- Defer so the focus dispatch does not re-enter this recalculation.
+        hl.timer(function()
+            if hl.get_active_window() then return end
+            hl.dispatch(hl.dsp.focus({ window = "address:" .. refocus.address }))
+        end, { timeout = 1, type = "oneshot" })
+    end
 end
 
+-- While a trackpad swipe moves windows (and briefly after), pointer focus is
+-- held at click-to-focus; apply_mouse_mode leaves it alone meanwhile.
+local swipe_follow_mouse, swipe_active, swipe_hold = nil, false, false
+local function hold_pointer()
+    -- Remember the user's pointer mode once across back-to-back swipes.
+    if not swipe_hold then swipe_follow_mouse = hl.get_config("input.follow_mouse") end
+    swipe_active, swipe_hold = true, true
+    hl.config({input={follow_mouse=2}})
+end
+local function release_pointer()
+    -- Restore pointer focus once windows have settled, unless another swipe
+    -- started meanwhile.
+    swipe_active = false
+    local function restore()
+        if swipe_active or not swipe_hold then return end
+        swipe_hold = false
+        hl.config({input={follow_mouse=swipe_follow_mouse}})
+        -- Re-apply the configured pointer mode for the focused window.
+        if _G.__hyprworld_apply_mouse then _G.__hyprworld_apply_mouse() end
+    end
+    if hl.timer then hl.timer(restore, {timeout=600, type="oneshot"}) else restore() end
+end
+local function restore_animations()
+    if _G.__hyprworld_apply_effects then
+        _G.__hyprworld_apply_effects(preferences.section("effects").animations ~= false)
+    end
+end
+
+-- Four-finger workspace swipe. The camera slides with the fingers while the
+-- windows fade through ten tag levels (window rules in
+-- integration/omarchy.lua; removing a tag restores a window's own opacity).
+-- A commit slides and fades the outgoing workspace out completely, switches
+-- instantly, then slides the incoming workspace in from the other side and
+-- fades it in, so both workspaces are never visible together.
+local FADE_LEVELS = 10
+local workspace_swipe, workspace_ticker = nil, nil
+local function fade_to(levels, address, level)
+    level = math.max(0, math.min(FADE_LEVELS, level))
+    local from = levels[address] or 0
+    if from == level then return end
+    local window = "address:" .. address
+    if from > 0 then hl.dispatch(hl.dsp.window.tag({window=window, tag="-hyprworld-fade-" .. from})) end
+    if level > 0 then hl.dispatch(hl.dsp.window.tag({window=window, tag="+hyprworld-fade-" .. level})) end
+    levels[address] = level
+end
+local function clear_fades(levels)
+    for address in pairs(levels) do fade_to(levels, address, 0) end
+end
+-- Outgoing fade at progress v: the others are gone by 60%, the focused
+-- window follows `focused_level`.
+local function fade_outgoing(swipe, v, focused_level)
+    local others = math.floor(math.min(1, v/0.6)*FADE_LEVELS + .5)
+    for _, address in ipairs(swipe.outgoing) do
+        fade_to(swipe.out, address, address == swipe.focused and focused_level or others)
+    end
+end
+local function finish_workspace_swipe()
+    local swipe = workspace_swipe
+    workspace_swipe = nil
+    if workspace_ticker then workspace_ticker:set_enabled(false) end
+    if not swipe then return end
+    clear_fades(swipe.out)
+    clear_fades(swipe.incoming or {})
+    restore_animations()
+    release_pointer()
+end
+local function start_workspace_ticker()
+    if not hl.timer then return end
+    if workspace_ticker then workspace_ticker:set_enabled(true); return end
+    workspace_ticker = hl.timer(function()
+        local swipe = workspace_swipe
+        if not swipe or swipe.phase == "live" then workspace_ticker:set_enabled(false); return end
+        -- A lost tick target (another monitor or app took focus) must not
+        -- leave windows faded.
+        swipe.ticks = (swipe.ticks or 0) + 1
+        if swipe.ticks > (swipe.half*2 + 1000)/16 then finish_workspace_swipe(); return end
+        hl.dispatch(hl.dsp.layout("workspace-swipe-tick"))
+    end, {timeout=16, type="repeat"})
+end
 local function layout_msg(ctx, message)
     if type(message) ~= "string" then return "hyprworld: layout message must be text" end
     local command, argument, extra = message:match("^(%S+)%s*(%S*)%s*(%S*)$")
@@ -402,18 +506,161 @@ local function layout_msg(ctx, message)
         core.follow(state)
     elseif command == "overview-open" then
         end_gesture()
-        state.pending_focus_id = nil
+        state.pending_focus_id, state.commit_attempts = nil, nil
         state.overview = true
+    elseif command == "workspace-swipe-begin" then
+        local delta = tonumber(argument)
+        local current = tonumber(workspace_key(ctx):match("^workspace:(%-?%d+)$"))
+        if workspace_swipe or state.overview or not delta or not current then return true end
+        local target = math.max(1, current + delta)
+        if target == current then return true end
+        local outgoing = {}
+        for _, d in pairs(descriptors) do if d.address then outgoing[#outgoing + 1] = d.address end end
+        -- A lower workspace enters from the left, so this one leaves right.
+        workspace_swipe = {delta=delta, sign=-delta, key=workspace_key(ctx), target=target,
+            target_key="workspace:" .. target, distance=ctx.area.w*0.3, x=state.camera.x or 0,
+            focused=descriptors[state.focused_id] and descriptors[state.focused_id].address,
+            outgoing=outgoing, out={}, phase="live", t=0}
+        hold_pointer()
+        hl.animation({leaf="windowsMove",enabled=false})
+        return true
+    elseif command == "workspace-swipe-update" then
+        local swipe = workspace_swipe
+        if not swipe or swipe.phase ~= "live" or swipe.key ~= workspace_key(ctx) then return true end
+        local t = math.max(0, math.min(1, tonumber(argument) or 0))
+        swipe.t = t
+        -- The focused window fades at most 35% while the fingers move.
+        fade_outgoing(swipe, t, math.floor(t*3.5 + .5))
+        state.camera.x = swipe.x + swipe.sign*swipe.distance*t
+    elseif command == "workspace-swipe-end" then
+        local swipe = workspace_swipe
+        if not swipe or swipe.phase ~= "live" then return true end
+        local effects = preferences.section("effects")
+        local ms, curve = motion.effective(effects, "workspace", 350)
+        if effects.animations == false then ms = 0 end
+        -- Each half (out, then in) takes 60% of the workspace duration.
+        swipe.curve, swipe.half, swipe.elapsed, swipe.from_t = curve, ms*0.6, 0, swipe.t
+        swipe.focused_from = swipe.focused and swipe.out[swipe.focused] or 0
+        swipe.phase = argument == "commit" and _G.__hyprworld_workspace_nav and "out" or "back"
+        start_workspace_ticker()
+        return true
+    elseif command == "workspace-swipe-tick" then
+        local swipe = workspace_swipe
+        if not swipe or swipe.phase == "live" then return true end
+        if workspace_key(ctx) ~= (swipe.phase == "in" and swipe.target_key or swipe.key) then
+            finish_workspace_swipe(); return true
+        end
+        swipe.elapsed = swipe.elapsed + 16
+        local u = swipe.half > 0 and math.min(1, swipe.elapsed/swipe.half) or 1
+        local e = motion.at(swipe.curve, u)
+        if swipe.phase == "back" then
+            local v = swipe.from_t*(1 - e)
+            fade_outgoing(swipe, v, math.floor(swipe.focused_from*(1 - e) + .5))
+            state.camera.x = swipe.x + swipe.sign*swipe.distance*v
+            if u >= 1 then state.camera.x = swipe.x; finish_workspace_swipe() end
+        elseif swipe.phase == "out" then
+            local v = swipe.from_t + (1 - swipe.from_t)*e
+            fade_outgoing(swipe, v, math.floor(swipe.focused_from + (FADE_LEVELS - swipe.focused_from)*e + .5))
+            state.camera.x = swipe.x + swipe.sign*swipe.distance*v
+            if u >= 1 then
+                -- Everything here is invisible now: return the camera, prepare
+                -- the destination faded and offset, and switch instantly.
+                fade_outgoing(swipe, 1, FADE_LEVELS)
+                state.camera.x = swipe.x
+                place_state(ctx, state, descriptors)
+                swipe.incoming = {}
+                local snapshot = snapshots[swipe.target_key]
+                for _, tile in ipairs(snapshot and snapshot.tiles or {}) do
+                    fade_to(swipe.incoming, tile.address, FADE_LEVELS)
+                    if tile.active then swipe.in_focused = tile.address end
+                end
+                local target_state = workspaces[swipe.target_key]
+                swipe.in_x = target_state and (target_state.camera.x or 0) or 0
+                if target_state then target_state.camera.x = swipe.in_x - swipe.sign*swipe.distance end
+                swipe.phase, swipe.elapsed = "in", 0
+                hl.animation({leaf="workspaces",enabled=false})
+                _G.__hyprworld_workspace_nav.step(swipe.delta)
+                -- An empty destination has nothing to bring in.
+                if not next(swipe.incoming) then finish_workspace_swipe() end
+                return true
+            end
+        else
+            -- Incoming: the focused window appears first, the others follow.
+            local focused_level = math.floor(FADE_LEVELS*(1 - math.min(1, e*1.6)) + .5)
+            local others = math.floor(FADE_LEVELS*(1 - math.max(0, (e - .3)/.7)) + .5)
+            for address in pairs(swipe.incoming) do
+                fade_to(swipe.incoming, address, address == swipe.in_focused and focused_level or others)
+            end
+            state.camera.x = swipe.in_x - swipe.sign*swipe.distance*(1 - e)
+            if u >= 1 then state.camera.x = swipe.in_x; finish_workspace_swipe() end
+        end
+    elseif command == "swipe-begin" then
+        -- Trackpad swipes move the camera live toward the neighbour they
+        -- would focus; swipe-end commits or returns (see touchpad.lua).
+        if state.overview or not ({left=true,right=true,up=true,down=true})[argument] then return true end
+        local target, dx, dy = core.swipe_shift(state, ctx.area, config, argument)
+        if not target then
+            -- No neighbour: a short rubber band toward the edge, never committed.
+            local edge = ({left={1,0},right={-1,0},up={0,1},down={0,-1}})[argument]
+            dx, dy = edge[1]*60, edge[2]*60
+        end
+        state.swipe = {target=target, dx=dx, dy=dy, x=state.camera.x or 0, y=state.camera.y or 0}
+        -- Track the fingers without animation lag, and keep windows sliding
+        -- under a still pointer from taking focus.
+        hold_pointer()
+        hl.animation({leaf="windowsMove",enabled=false})
+    elseif command == "swipe-update" then
+        local swipe = state.swipe
+        if not swipe then return true end
+        local t = math.max(0, math.min(1, tonumber(argument) or 0))
+        state.camera.x, state.camera.y = swipe.x + swipe.dx*t, swipe.y + swipe.dy*t
+    elseif command == "swipe-end" then
+        local swipe = state.swipe
+        state.swipe = nil
+        if not swipe then return true end
+        restore_animations()
+        if argument == "commit" and swipe.target and descriptors[swipe.target] then
+            focus_descriptor(ctx, state, descriptors, descriptors[swipe.target])
+        else
+            state.camera.x, state.camera.y = swipe.x, swipe.y
+        end
+        release_pointer()
+    elseif command == "launch-preview" then
+        -- The overlay draws its launch placeholder where the next window lands,
+        -- and the camera pans there now so the window maps without moving.
+        local camera
+        state.launch_box, camera = core.predict_new(state, ctx.area, config)
+        if camera then
+            state.camera.col, state.camera.row = camera.col, camera.row
+            state.camera.x, state.camera.y = camera.x, camera.y
+        end
+        state.launch_serial = (state.launch_serial or 0) + 1
+        -- Until the app settles, map/unmap refocusing of older windows must
+        -- not pull the camera away (see the window.active handler).
+        state.launch_until = state.launch_box and os.time() + 20 or nil
+        state.launch_windows, state.launch_last = {}, nil
+    elseif command == "launch-cancel" then
+        -- The overview reopened before the app mapped: stop guarding focus.
+        state.launch_until, state.launch_windows, state.launch_last = nil, nil, nil
     elseif command == "overview-dismiss" then
         state.overview, state.pending_focus_id = false, nil
     elseif command == "overview-close" then
-        if state.overview then state.pending_focus_id = state.focused_id end
+        if state.overview then
+            state.pending_focus_id, state.commit_attempts = state.focused_id, nil
+            core.follow(state)
+        end
         state.overview = false
     elseif command == "overview-commit" then
         local id = state.pending_focus_id
         if not state.overview and id and descriptors[id] and descriptors[id].address == argument then
-            focus_descriptor(ctx, state, descriptors, descriptors[id])
-            state.pending_focus_id = nil
+            focus_descriptor(ctx, state, descriptors, descriptors[id], true)
+            -- Hyprland refuses window focus while an exclusive layer still owns
+            -- the keyboard. Keep the selection pending so the overlay retries.
+            state.commit_attempts = (state.commit_attempts or 0) + 1
+            local landed = safe_field(hl.get_active_window(), "address") == argument
+            if landed or state.commit_attempts >= 8 then
+                state.pending_focus_id, state.commit_attempts = nil, nil
+            end
         end
     elseif command == "overview-select" then
         for _, descriptor in pairs(descriptors) do
@@ -511,6 +758,7 @@ local function layout_msg(ctx, message)
             return "hyprworld: toggle-max requires an active window"
         end
     elseif command == "follow" or command == "center" then
+        if command == "follow" and argument == "launch-expired" then state.launch_until = nil end
         core.follow(state)
     elseif command == "refresh" then
         -- Update selection without moving an already visible tile.
@@ -586,7 +834,7 @@ local function apply_mouse_mode(window)
             mouse_baseline = {follow_mouse = hl.get_config("input.follow_mouse"),
                 float_switch_override_focus = hl.get_config("input.float_switch_override_focus")}
         end
-        if hover_cooldown then return end
+        if hover_cooldown or swipe_hold then return end
         local mode = preferences.mouse()
         mouse_owned = {follow_mouse = mode == "click" and 2 or 1,
             float_switch_override_focus = mode == "click" and 0 or mouse_baseline.float_switch_override_focus}
@@ -645,7 +893,37 @@ if not rawget(_G, "__hyprworld_focus_subscription") then
             local workspace_id = safe_field(workspace, "id")
             local key = "workspace:" .. tostring(workspace_id)
             local state = workspace_id ~= nil and workspaces[key] or nil
+            if state and state.pending_focus_id and not state.overview
+                and state.pending_focus_id == window_id(window) then
+                -- The overview commit landed; it already placed the selection.
+                state.pending_focus_id, state.commit_attempts = nil, nil
+                return
+            end
             if state and (state.overview or state.pending_focus_id) then return end
+            -- A workspace swipe moves the camera itself; focus changes during it
+            -- (the switch, windows under the pointer) must not pan it.
+            if workspace_swipe then
+                if state then core.observe_focus(state, window_id(window)) end
+                return
+            end
+            -- While a launched app starts, Hyprland re-focuses older windows as
+            -- the overlay releases the keyboard and as splash windows unmap.
+            -- Following them would pan the camera away from the app, sliding
+            -- more windows under the pointer. Keep the camera and hand focus
+            -- back to the app's newest window.
+            if state and state.launch_until then
+                if os.time() > state.launch_until then
+                    state.launch_until, state.launch_windows, state.launch_last = nil, nil, nil
+                elseif not (state.launch_windows and state.launch_windows[window_id(window)]) then
+                    local address = state.launch_last
+                    if address and hl.timer then
+                        hl.timer(function()
+                            hl.dispatch(hl.dsp.focus({ window = "address:" .. address }))
+                        end, { timeout = 1, type = "oneshot" })
+                    end
+                    return
+                end
+            end
             apply_mouse_mode(window)
             local visible = fully_visible(key, safe_field(window, "address"))
             -- Only a hover that pans the camera starts a cooldown. Group

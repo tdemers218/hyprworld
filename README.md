@@ -22,8 +22,14 @@ The interface uses Omarchy Shell components and is not a standalone Quickshell a
 
 - Scrolling and camera movement in both dimensions.
 - Groups of two, three, or four visible windows, with drag grouping and swaps.
-- Interactive overview with keyboard navigation, dragging, and workspace transitions.
-- Minimap with fixed or fit sizing, smooth fit-size transitions, adjustable placement, opacity, and outlines.
+- Interactive overview with keyboard navigation, dragging, workspace transitions,
+  and an immersive cascade transition that follows your animation curve.
+- Overview search across workspaces with preview cards, window state details,
+  and launching of installed apps that have no window yet.
+- Minimap with fixed or fit sizing, smooth fit-size transitions, adjustable placement,
+  and Base, Glass, Constellation, or Icons styles.
+- Animation presets and visual curve editors for every Hyprworld animation,
+  including camera movement and workspace slides.
 - Continuous drag outlines within and across monitors, including the destination drop preview.
 - Automatic settled-layout checkpoints that restore open-window arrangements after plugin resets.
 - Continuous mouse-wheel zoom and keyboard zoom presets.
@@ -31,7 +37,8 @@ The interface uses Omarchy Shell components and is not a standalone Quickshell a
 - Searchable settings with 19 configurable shortcuts, key capture, and conflict highlighting.
 - Custom opening paths, optional workspace targeting, and layouts for each group size.
 - Captured startup workspace templates with application launching and grouping.
-- Hover or click focus, configurable compaction, and touchpad navigation.
+- Hover or click focus, configurable compaction, and live touchpad swipes that
+  follow your fingers and spring back when too short.
 
 ## Install
 
@@ -91,10 +98,10 @@ replace the normal workspace widget through Omarchy's bar configuration.
 | Pan camera | Super+middle mouse drag |
 | Move or group with pointer | Super+left mouse drag |
 | Toggle overview | Super+O |
-| Focus with touchpad | Three-finger swipe in any direction |
+| Focus with touchpad | Three-finger swipe in any direction (the camera follows) |
 | Continuous zoom with touchpad | Two-finger pinch / spread |
 | Previous / next workspace with touchpad | Four-finger swipe left / right |
-| Toggle overview with touchpad | Four-finger swipe up / down |
+| Toggle overview with touchpad | Four-finger swipe up / down (the overview follows) |
 | Open settings | Super+Shift+L |
 | Select workspace 1–10 | Super+1–0 |
 | Move window to workspace and follow | Super+Shift+1–0 |
@@ -115,6 +122,16 @@ The old split/pseudo, saved-width, and minus/equal resize shortcuts are removed.
 Native tab-group shortcuts remain available. Touchpad callbacks use Hyprland's
 [Lua gesture API](https://wiki.hypr.land/Configuring/Advanced-and-Cool/Gestures/).
 
+With **Live swipes** on (the default), three-finger swipes slide the camera
+toward the window they will focus and four-finger up/down swipes open or close
+the overview as you move. Four-finger left/right slides the workspace with your
+fingers while its windows fade, the focused one only slightly. On release the
+workspace slides and fades out completely before the next one slides in from
+the other side and fades in, so you never see both at once.
+Lift past **Swipe commit distance** to complete an action; shorter or cancelled
+swipes spring back. Turn live swipes off in Flow → Gestures to make every
+gesture act once on release.
+
 ### Groups and overview
 
 Dropping a window onto another creates or extends a group. By default, two windows share
@@ -129,8 +146,15 @@ monitor boundary. The outline follows continuously on both source and destinatio
 
 Overview displays the current workspace number. Type in the search field to fuzzy
 match windows across workspaces using titles, application names, and all metadata
-exposed by Hyprland (including initial titles, workspace, PID, and tags). Up/Down
-select results, Enter activates one, and Escape clears the search before closing.
+exposed by Hyprland (including initial titles, workspace, PID, and tags). Results
+appear as preview cards; the arrow keys move through them, Enter activates one,
+and Escape clears the search before closing. Cards show notable window states
+such as floating, fullscreen, pinned, tabbed, video, keeping awake, or XWayland.
+
+When an installed app matches the search and has no open window, a **Launch**
+card opens it on the current workspace. A pulsing, theme-colored placeholder
+marks the slot where it will appear until its window maps (up to 20 seconds).
+The arrows at the overview's edges switch workspaces with the mouse.
 
 In overview, arrows select, Shift+arrows move/group, Alt+arrows resize, and
 left-drag moves cards. Super+middle-drag pans. The configured workspace shortcuts
@@ -141,7 +165,7 @@ to close it.
 ## Settings
 
 Open **Super+Shift+L** for settings. The icon sidebar contains
-Minimap, Overview, Flow, Placement paths, Group layouts, Startup workspaces,
+Minimap, Overview, Effects, Flow, Placement paths, Group layouts, Startup workspaces,
 Shortcuts, and Plugin. Search across controls, expand advanced options, and preview
 changes before **Apply**. **Revert** discards the draft; section defaults are also
 kept in the draft until applied.
@@ -150,8 +174,20 @@ Minimap and overview include visibility, geometry, labels, colors and animation
 controls. Minimap **Sizing mode** selects fixed or fit sizing. Fit respects the
 maximum dimensions and focused-window geometry; switching focus to a same-sized
 window keeps its fit stable. When a new fit is needed, position, size and scale
-glide together using **Movement duration** (300 ms by default). Disabling
-animations or setting that duration to zero makes the transition immediate.
+glide together using the minimap movement animation (300 ms by default).
+Disabling animations or setting that duration to zero makes it immediate.
+The minimap **Style** is Base (outlined cards), Glass (each card blurs what is
+behind it; **Glass blur radius** is 10 px by default), Constellation (glowing
+stars joined by links, with the focus glow travelling along them), or Icons
+(one large app icon per window).
+
+Effects sets how every Hyprworld animation feels. Pick a preset (smooth,
+snappy, gentle, bouncy, instant) or **custom** to edit curves directly: drag a
+curve's two control points, pick a named curve, set its duration, and press ▶
+to preview it. In advanced mode, **Curve mode** switches between one
+**general** curve with a speed multiplier and **individual** curves. Camera
+movement and the workspace slide apply to Hyprland's own window and workspace
+animations.
 
 Flow contains compaction, focus, geometry and touchpad sensitivity.
 Placement paths can open windows horizontally, vertically, or along custom ordered
@@ -236,6 +272,9 @@ plugin makes its settings shortcut unavailable.
   only. Include monitor scale and window count in a bug report.
 - **Layout loads but no settings/overview:** use the full Omarchy shell plugin;
   the config installer loads only the Lua integration.
+- **Unexpected jump to workspace 10:** note the time and include the matching
+  lines of `~/.local/state/hyprworld/workspace-trace.log` in the report. It
+  records which binding requested each workspace and every actual change.
 
 Automated regressions cover the layout and settings logic. Isolated compositor
 checks cover actual window placement, workspace swaps in multiple monitor

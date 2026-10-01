@@ -4,7 +4,8 @@
 // not its destination, so resizing cannot overshoot the available space.
 function fit(width, height, screenWidth, screenHeight, prefs, obstacle) {
     var right = prefs.corner.endsWith('right'), bottom = prefs.corner.startsWith('bottom');
-    var margin = prefs.shadow || prefs.style === 'elevated' || prefs.style === 'glass' ? 28 : 6;
+    // Reserve room for effects drawn outside the cards.
+    var margin = prefs.shadow ? 28 : prefs.style === 'constellation' ? 12 : 6;
     var top = Math.max(margin, prefs.showWorkspace ? 22 : 0);
     var sx = Math.max(margin, Math.min(prefs.x, screenWidth - margin));
     var sy = Math.max(bottom ? margin : top, Math.min(prefs.y, screenHeight - (bottom ? top : margin)));
@@ -42,4 +43,49 @@ function stableObstacle(previous, next, sameWorkspace) {
     if (!next) return previous;
     if (previous && sameWorkspace && Math.abs(previous.w-next.w)<0.01 && Math.abs(previous.h-next.h)<0.01) return previous;
     return next;
+}
+
+// Constellation links: a minimum spanning tree over the window centres, so
+// every star is reachable and links follow the shortest overall layout.
+// points: {id:{x,y}}. Returns [[idA,idB], ...] in a stable order.
+function constellation(points) {
+    var ids = Object.keys(points).sort(), edges = [];
+    if (ids.length < 2) return edges;
+    var inTree = {}, best = {}, from = {};
+    inTree[ids[0]] = true;
+    ids.forEach(function(id) { best[id] = Infinity; });
+    var last = ids[0];
+    for (var n = 1; n < ids.length; n++) {
+        var next = null;
+        ids.forEach(function(id) {
+            if (inTree[id]) return;
+            var d = Math.hypot(points[id].x - points[last].x, points[id].y - points[last].y);
+            if (d < best[id]) { best[id] = d; from[id] = last; }
+            if (next === null || best[id] < best[next]) next = id;
+        });
+        inTree[next] = true; edges.push([from[next], next]); last = next;
+    }
+    return edges;
+}
+// Star ids along the tree from one star to another, both included.
+function constellationPath(edges, start, end) {
+    var links = {};
+    edges.forEach(function(e) {
+        (links[e[0]] = links[e[0]] || []).push(e[1]);
+        (links[e[1]] = links[e[1]] || []).push(e[0]);
+    });
+    var previous = {}, queue = [start], seen = {};
+    seen[start] = true;
+    while (queue.length) {
+        var id = queue.shift();
+        if (id === end) {
+            var path = [end];
+            while (path[0] !== start) path.unshift(previous[path[0]]);
+            return path;
+        }
+        (links[id] || []).forEach(function(other) {
+            if (!seen[other]) { seen[other] = true; previous[other] = id; queue.push(other); }
+        });
+    }
+    return start === end ? [start] : [];
 }

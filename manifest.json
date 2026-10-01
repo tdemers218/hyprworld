@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.tdemers218.hyprworld",
   "name": "Hyprworld",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "Tristan Demers",
   "license": "MIT",
   "description": "A two-dimensional scrolling workspace for Hyprland on Omarchy, with visible window groups, searchable overview, smooth-fit minimap, continuous cross-monitor drag outlines, shared workspaces, placement paths, startup templates, and keyboard/touchpad controls. Settled checkpoints restore layouts after plugin resets in the same compositor session. Requires the Hyprland Lua API, Omarchy Shell, and a native helper built for the running Hyprland version.",

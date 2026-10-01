@@ -28,17 +28,18 @@ Text remains for ambiguous concepts and accessible names.
 
 | Section | Working controls |
 | --- | --- |
-| Minimap | Visibility exceptions, fixed/fit sizing, fit maximum dimensions, position, size, borders, corners, fill/backdrop opacity, custom colors, icons, titles, workspace label, click-to-focus, movement/fade durations |
-| Overview | Open/close and workspace transition timing, easing, reduced motion, wallpaper dimming, card/group sizes, spacing, corners, colors, labels, title font size, search scope/metadata, empty-space exit |
-| Flow | Compaction delay and move/removal triggers, focused-tile anchoring, click/hover focus, hover cooldown, gaps, edge peeks, initial dimensions, gesture threshold and pinch sensitivity |
+| Minimap | Visibility exceptions, fixed/fit sizing, fit maximum dimensions, position, size, borders, corners, fill/backdrop opacity, custom colors, icons, titles, workspace label, click-to-focus, style (Base, Glass, Constellation, Icons), glass blur radius |
+| Overview | Reduced motion, card cascade, wallpaper depth zoom, focus ring, wallpaper dimming and blur, card/group sizes, spacing, corners, colors, labels, window state details, title font size, search scope/metadata, app launching, empty-space exit |
+| Effects | Animation feel presets; visual curve editors with durations for every animation; general or individual curve mode with a speed multiplier; smooth zoom response; animations, post-processing, shadows and blur switches |
+| Flow | Compaction delay and move/removal triggers, focused-tile anchoring, click/hover focus, hover cooldown, gaps, edge peeks, initial dimensions, live swipes, swipe commit and full distances, pinch sensitivity |
 | Placement paths | Horizontal/vertical/custom, visual numbered editor, branching, tile capacity, order, vacancy filling, extend/repeat overflow |
 | Group layouts | Independent 2/3/4-window presets: columns, rows, grid, master-left, master-right, master-top; master proportion slider and draggable divider |
 | Startup workspaces | Named templates, workspace/monitor, app commands and matching classes, position/group coordinates, zoom, capture, manual launch, opt-in session startup |
 | Shortcuts | Fuzzy search by action/binding, all/customized filter, edit or keyboard capture, individual defaults, conflict validation |
 | Plugin | Enable/disable, shell refresh, original-plugin credits |
 
-Appearance and layout settings apply without a configuration reload. Shortcut or
-plugin-enable changes reload Hyprland; settled checkpoints restore matching open
+Appearance and layout settings apply without a configuration reload. Shortcut
+or plugin-enable changes reload Hyprland; settled checkpoints restore matching open
 windows within that compositor session. See [layout recovery](LAYOUT-RECOVERY.md).
 Automatic checkpoints are separate from startup templates and require no settings
 switch. Fit resizing glides with the minimap movement duration; equal-sized focus
@@ -54,7 +55,7 @@ These remain design proposals, not inactive switches in the UI:
 
 - Per-monitor overrides, all-monitor minimaps, additional anchors, idle visibility,
   viewport shading, hover tooltips, and interactive minimap dragging.
-- Live window thumbnails/privacy exclusions, multiple overview layout modes,
+- Live window thumbnails in overview cards/privacy exclusions, multiple overview layout modes,
   simultaneous multi-monitor overview, custom backgrounds, context menus and
   independently configurable entry/exit gestures.
 - Named placement profiles, per-workspace/app routing, initial branch selection,

@@ -14,7 +14,7 @@ const defaults = settings.defaults().minimap;
 assert.equal(defaults.placementMode, 'fixed');
 assert.equal(settings.normalize({minimap:{shrinkToFit:true}}).minimap.placementMode,'fit');
 assert.equal(settings.normalize({minimap:{shrinkToFit:true,placementMode:'fixed'}}).minimap.placementMode,'fixed');
-assert.equal(defaults.style, 'classic');
+assert.equal(defaults.style, 'base');
 assert.equal(settings.defaults().effects.animations,true);
 assert.equal(settings.normalize({effects:{animations:false,postProcessing:false}}).effects.animations,false);
 assert.equal(settings.normalize({effects:{postProcessing:false}}).effects.postProcessing,false);
@@ -22,7 +22,9 @@ assert.equal(settings.fields().find(f => f.key === 'hideBelow').advanced, true);
 assert.ok(!settings.fields().find(f => f.key === 'placementMode').advanced);
 assert.equal(settings.fields().find(f => f.key === 'placementMode').group,'Placement');
 assert.equal(settings.normalize({minimap:{hideBelow:500,style:'invalid'}}).minimap.hideBelow,100);
-assert.equal(settings.normalize({minimap:{style:'invalid'}}).minimap.style,'classic');
+assert.equal(settings.normalize({minimap:{style:'invalid'}}).minimap.style,'base');
+for (const [legacy, current] of [['classic','base'],['elevated','base'],['high-contrast','base'],['glass','glass']])
+    assert.equal(settings.normalize({minimap:{style:legacy}}).minimap.style, current, legacy);
 const prefs = {...defaults, placementMode:'fit', hideBelow:0};
 const obstacle = {x:100,y:100,w:1720,h:880};
 let r = layout.fit(220,140,1920,1080,prefs,obstacle);
@@ -44,7 +46,7 @@ const random = () => ((seed = (seed*1664525+1013904223)>>>0)/4294967296);
 for (let i=0;i<5000;i++) {
     const sw=60+random()*2200, sh=60+random()*1500;
     const p={...prefs,corner:['top-left','top-right','bottom-left','bottom-right'][i%4],
-        style:['classic','elevated','glass','high-contrast'][i%4],
+        style:['base','glass','constellation','icons'][i%4],
         shadow:i%2===0,showWorkspace:i%3===0,x:random()*1000,y:random()*1000};
     const b={x:random()*sw,y:random()*sh,w:random()*sw,h:random()*sh};
     const w=10+random()*800,h=10+random()*600;
@@ -52,7 +54,7 @@ for (let i=0;i<5000;i++) {
     assert.ok(a.scale>=0 && a.scale<=Math.min(sw/w,sh/h)+1e-8);
     assert.ok(a.w<=p.fitMaxWidth+1e-8 && a.h<=p.fitMaxHeight+1e-8);
     if (!a.visible) continue;
-    const margin=p.shadow || p.style==='elevated' || p.style==='glass'?28:6, top=Math.max(margin,p.showWorkspace?22:0);
+    const margin=p.shadow?28:p.style==='constellation'?12:6, top=Math.max(margin,p.showWorkspace?22:0);
     const left=a.x-margin,right=a.x+a.w+margin,up=a.y-top,down=a.y+a.h+margin;
     assert.ok(left>=-1e-8 && up>=-1e-8 && right<=sw+1e-8 && down<=sh+1e-8);
     assert.ok(right<=b.x+1e-8 || left>=b.x+b.w-1e-8 || down<=b.y+1e-8 || up>=b.y+b.h-1e-8);
@@ -79,3 +81,30 @@ assert.equal(layout.stableObstacle(stable,null,true),stable);
 assert.notEqual(layout.stableObstacle(stable,{x:100,y:100,w:450,h:600},true),stable);
 assert.notEqual(layout.stableObstacle(stable,{x:100,y:100,w:900,h:600},false),stable);
 for (const input of [null,[],{placement:{nodes:[null,4]}},{startup:{templates:[null,{apps:[null]}]}}]) assert.doesNotThrow(()=>settings.normalize(input));
+{
+    const points={a:{x:0,y:0},b:{x:10,y:0},c:{x:20,y:0},d:{x:10,y:10}};
+    const edges=layout.constellation(points);
+    assert.equal(edges.length,3,'tree links every star once');
+    const linked=new Set(edges.map(e=>[...e].sort().join('-')));
+    for (const link of ['a-b','b-c','b-d']) assert.ok(linked.has(link),link);
+    assert.equal([...layout.constellationPath(edges,'a','c')].join(','),'a,b,c');
+    assert.equal([...layout.constellationPath(edges,'d','a')].join(','),'d,b,a');
+    assert.equal([...layout.constellationPath(edges,'a','a')].join(','),'a');
+    assert.equal(layout.constellationPath(edges,'a','zz').length,0);
+    assert.equal(layout.constellation({a:{x:0,y:0}}).length,0);
+    console.log('ok - constellation spanning links and focus travel paths');
+}
+{
+    const motion=library('OverviewMotion.js');
+    const delays=motion.cascadeDelays([{address:'a',col:0,row:0,active:true},{address:'b',col:1,row:0},{address:'c',col:2,row:0}]);
+    assert.equal(delays.a,0); assert.equal(delays.b,.5); assert.equal(delays.c,1);
+    // Every element starts at 0 and ends at 1 within the same duration.
+    for (const delay of [0,.5,1]) {
+        assert.equal(motion.phase(0,delay,.3),0);
+        assert.equal(motion.phase(1,delay,.3),1);
+    }
+    assert.ok(motion.phase(.2,0,.3) > motion.phase(.2,1,.3), 'near cards lead the cascade');
+    assert.equal(motion.phase(.4,1,0), .4, 'no cascade keeps plain timing');
+    assert.equal(Object.keys(motion.cascadeDelays([])).length,0);
+    console.log('ok - overview cascade timing');
+}

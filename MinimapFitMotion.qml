@@ -7,11 +7,13 @@ QtObject {
     property var origin: frame
     property var destination: frame
     property int duration: 300
+    property int easingType: Easing.OutCubic
+    property var bezierCurve: []
     property real progress: 1
     property bool initialized: false
     property NumberAnimation animation: NumberAnimation {
         target: motion; property: "progress"; from: 0; to: 1
-        duration: motion.duration; easing.type: Easing.OutCubic
+        duration: motion.duration; easing.type: motion.easingType; easing.bezierCurve: motion.bezierCurve
     }
     function render() {
         var result = {visible:destination.visible}

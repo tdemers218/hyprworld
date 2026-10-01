@@ -47,3 +47,40 @@ function rank(query, windows) {
         .sort(function(a,b) { return a.score-b.score || a.index-b.index; })
         .map(function(result) { return result.window; });
 }
+// Desktop apps that match the query and have no open window. Only direct
+// substring matches of two or more characters count, so a short query does
+// not offer unrelated apps.
+function launchable(query, apps, windows, limit) {
+    if (String(query || "").trim().length < 2) return [];
+    var open = {};
+    windows.forEach(function(w) {
+        [w.class, w.initialClass].forEach(function(c) { if (c) open[normalize(c)] = true; });
+    });
+    function isOpen(app) {
+        var id = String(app.id || "");
+        return [app.startupClass, id, id.split(".").pop()].some(function(key) { return key && open[normalize(key)]; });
+    }
+    return apps.filter(function(app) { return app && app.id && !isOpen(app); })
+        .map(function(app, index) {
+            return {app:app, index:index, score:score(query, {name:app.name, genericName:app.genericName, keywords:app.keywords, id:app.id})};
+        })
+        .filter(function(result) { return result.score >= 0 && result.score < 1; })
+        .sort(function(a,b) { return a.score-b.score || a.index-b.index; })
+        .slice(0, limit || 4)
+        .map(function(result) { return result.app; });
+}
+// Short labels for window states worth noticing; ordinary windows get none.
+function details(window) {
+    if (!window) return [];
+    var result = [];
+    if (window.fullscreen) result.push("Fullscreen");
+    if (window.floating) result.push("Floating");
+    if (window.pinned) result.push("Pinned");
+    if (Array.isArray(window.grouped) && window.grouped.length > 1) result.push("Tabbed ×" + window.grouped.length);
+    if (window.contentType === "video") result.push("Video");
+    else if (window.contentType === "game") result.push("Game");
+    if (window.inhibitingIdle) result.push("Keeping awake");
+    if (window.hidden) result.push("Hidden");
+    if (window.xwayland) result.push("XWayland");
+    return result;
+}

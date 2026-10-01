@@ -18,12 +18,18 @@ Item {
     property string searchQuery: ""
     property int searchIndex: 0
     property var ipcWindows: []
+    // Full `hyprctl clients` objects carry state that toplevel IPC snapshots may lack.
+    readonly property var ipcByAddress: {
+        var map = {}
+        ipcWindows.forEach(function(w) { if (w && w.address) map[w.address] = w })
+        return map
+    }
     readonly property var searchWindows: {
         var windows = [], seen = {}
         Hyprland.toplevels.values.forEach(function(t) {
             var data = t.lastIpcObject || {}
             if (!data.address) return
-            var copy = Object.assign({}, data)
+            var copy = Object.assign({}, data, root.ipcByAddress[data.address] || {})
             copy.application = root.app(data).name
             windows.push(copy); seen[data.address] = true
         })
@@ -36,30 +42,110 @@ Item {
         root.tiles.forEach(function(t) {
             if (!seen[t.address]) windows.push(Object.assign({}, t, {workspace:{id:root.snapshot.workspaceId}, application:root.app(t).name}))
         })
-        return windows
+        // Equal search scores keep the most recently focused window first.
+        function recency(w) { return typeof w.focusHistoryID === "number" && w.focusHistoryID >= 0 ? w.focusHistoryID : 1e6 }
+        return windows.sort(function(a, b) { return recency(a) - recency(b) })
     }
     readonly property var searchResults: Search.rank(searchQuery, searchWindows.filter(function(w) {
         return preferences.overview.searchScope!=="workspace" || (w.workspace && w.workspace.id===snapshot.workspaceId)
     }).map(function(w) {
         return preferences.overview.searchMetadata ? w : {address:w.address,class:w.class,title:w.title,workspace:w.workspace,application:w.application}
     }))
+    readonly property var launchEntries: {
+        var entries = DesktopEntries.applications.values, result = []
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i]
+            if (e.noDisplay) continue
+            result.push({id:String(e.id), name:e.name, genericName:e.genericName, keywords:e.keywords,
+                startupClass:e.startupClass, icon:e.icon})
+        }
+        return result
+    }
+    readonly property var launchResults: preferences.overview.launchApps
+        ? Search.launchable(searchQuery, launchEntries, searchWindows, 4) : []
+    // Windows first, then installed apps that have no window yet.
+    readonly property var resultItems: searchResults.map(function(w) { return {kind:"window", window:w} })
+        .concat(launchResults.map(function(a) { return {kind:"app", app:a} }))
     onSearchQueryChanged: searchIndex = 0
-    onSearchResultsChanged: searchIndex = Math.max(0, Math.min(searchIndex, searchResults.length-1))
+    onResultItemsChanged: searchIndex = Math.max(0, Math.min(searchIndex, resultItems.length-1))
     onOverviewChanged: {
+        scheduleCommit()
         if (!overview) searchQuery = ""
         else if (!clientsReader.running) clientsReader.running = true
     }
+    function launchApp(app) {
+        if (!app || !app.id) return
+        // Dismiss rather than close: closing re-focuses the old selection,
+        // which would steal focus from the window that is about to open.
+        command("overview-dismiss")
+        // The layout predicts the new window's box; see launchBox below.
+        var serial = snapshot.launchSerial || 0
+        if (tiles.length) command("launch-preview")
+        // Same launch path as the Omarchy app launcher; the window opens on
+        // the active workspace, which is the one this overview shows.
+        Quickshell.execDetached(["uwsm-app", "--", "gtk-launch", app.id + ".desktop"])
+        var known = {}
+        Hyprland.toplevels.values.forEach(function(t) { if (t.address) known[root.addressKey(t.address)] = true })
+        launchInfo = {name: app.name || app.id, icon: app.icon, known: known, started: Date.now(), serial: serial}
+        launching = true
+        launchWatch.restart()
+    }
+    // Placeholder shown until the launched app maps any new window.
+    property bool launching: false
+    property var launchInfo: ({})
+    // Only a prediction requested by this launch counts; older ones are stale.
+    readonly property var launchBox: launching && snapshot.launchBox && (snapshot.launchSerial || 0) > launchInfo.serial ? snapshot.launchBox : null
+    function addressKey(address) { return String(address || "").toLowerCase().replace(/^0x/, "") }
+    Timer {
+        id: launchWatch
+        interval: 150; repeat: true
+        onTriggered: {
+            var info = root.launchInfo
+            var mapped = Hyprland.toplevels.values.some(function(t) { return t.address && !info.known[root.addressKey(t.address)] })
+            var expired = Date.now() - info.started > 20000
+            if (!root.launching || mapped || root.overview || expired) {
+                // Nothing opened: return the camera from the empty slot.
+                if (expired && !mapped && root.launching && root.tiles.length) root.command("follow launch-expired")
+                // Reopening the overview first must also end the layout's guard.
+                else if (!mapped && root.launching && root.overview) root.command("launch-cancel")
+                root.launching = false; stop()
+            }
+        }
+    }
     function selectSearchResult(index) {
-        var w = searchResults[index]
+        var item = resultItems[index]
+        if (item && item.kind === "app") { launchApp(item.app); return }
+        var w = item && item.window
         if (!w || !/^0x[0-9a-f]+$/i.test(w.address)) return
         var ws = Number(w.workspace && w.workspace.id)
         var workspaceName = String((w.workspace && w.workspace.name) || "")
-        var code = "__hyprworld_set_overview(false); "
         var special = workspaceName.match(/^special:([A-Za-z0-9_.-]+)$/)
-        if (special) code += "hl.dispatch(hl.dsp.workspace.toggle_special(" + JSON.stringify(special[1]) + ")); "
-        else if (ws > 0 && Number.isInteger(ws)) code += "__hyprworld_workspace_nav.select(" + ws + "); "
-        code += 'hl.dispatch(hl.dsp.focus({window="address:' + w.address + '"}))'
+        // A window in this overview uses the layout's own select + commit path.
+        if (!special && ws === snapshot.workspaceId && tiles.some(function(t) { return t.address === w.address })) {
+            command("overview-select " + w.address); return
+        }
+        // Elsewhere: release the keyboard, switch workspace, then focus once
+        // the layer no longer holds exclusive focus (Hyprland refuses before).
+        locallyDismissed = true
+        var code = "__hyprworld_set_overview(false); "
+        if (special) code += "hl.dispatch(hl.dsp.workspace.toggle_special(" + JSON.stringify(special[1]) + "))"
+        else if (ws > 0 && Number.isInteger(ws)) code += "__hyprworld_workspace_nav.select(" + ws + ")"
         Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl", "eval", code])
+        focusRetry.address = w.address; focusRetry.attempts = 0; focusRetry.restart()
+    }
+    function sameAddress(a, b) { return addressKey(a) === addressKey(b) }
+    Timer {
+        id: focusRetry
+        property string address: ""
+        property int attempts: 0
+        interval: 80; repeat: true
+        onTriggered: {
+            var active = Hyprland.activeToplevel
+            if (!address || root.overview || attempts >= 12 || (active && root.sameAddress(active.address, address))) { stop(); return }
+            if (root.transitioning) return
+            attempts++
+            Hyprland.dispatch('hl.dsp.focus({window="address:' + address + '"})')
+        }
     }
     property bool pushAvailable: false
     property var previewStream: ({})
@@ -71,7 +157,7 @@ Item {
             monitor:next.monitor, monitorX:next.monitorX, monitorY:next.monitorY}
     }
     property bool compactAnimating: false
-    Timer { id: compactAnimation; interval: 320; onTriggered: root.compactAnimating=false }
+    Timer { id: compactAnimation; interval: root.anim("compact").ms + 20; onTriggered: root.compactAnimating=false }
     signal changingSnapshot(var next)
     ListModel { id: tileModel; dynamicRoles: true }
     function acceptSnapshot(next) {
@@ -123,27 +209,74 @@ Item {
     readonly property bool overview: !locallyDismissed && preferences.plugin.enabled && snapshot.overview === true
     readonly property string commitAddress: snapshot.commitAddress || ""
     readonly property bool hasGroups: tiles.some(function(tile) { return tile.part && tile.part.count > 1 })
-    onCommitAddressChanged: if (commitAddress && !overview) commitTimer.restart()
+    // commitAddress and overview both derive from the snapshot and notify in
+    // either order, so check again whenever either one changes.
+    function scheduleCommit() {
+        if (!commitAddress || overview || commitTimer.running) return
+        commitTimer.attempts = 0
+        commitTimer.restart()
+    }
+    onCommitAddressChanged: scheduleCommit()
     // Focus only after the layer has released exclusive keyboard ownership.
-    // This is the requested selection being committed once, not a focus repair.
-    Timer { id: commitTimer; interval: root.overviewDuration + 20; onTriggered: if (root.commitAddress && !root.overview) root.command("overview-commit " + root.commitAddress) }
+    // Hyprland refuses focus while the layer still holds the keyboard, so the
+    // adapter keeps the selection pending and this retries until it lands.
+    Timer {
+        id: commitTimer
+        property int attempts: 0
+        interval: attempts === 0 ? root.overviewDuration + 20 : 60
+        repeat: true
+        onTriggered: {
+            if (!root.commitAddress || root.overview || attempts >= 8) { stop(); return }
+            if (root.transitioning) return
+            attempts++
+            root.command("overview-commit " + root.commitAddress)
+        }
+    }
     readonly property bool minimap: preferences.plugin.enabled && preferences.minimap.enabled && (!preferences.minimap.hideFullscreen || !overlayState.fullscreenActive) && tiles.length > (preferences.minimap.hideSingle ? 1 : 0) && !overview && (!preferences.minimap.hideMaxZoom || snapshot.zoom < snapshot.maxZoom)
     property real minimapProgress: minimap ? 1 : 0
     readonly property bool animationsEnabled: preferences.effects.animations
     readonly property bool overviewAnimations: animationsEnabled && !preferences.overview.reducedMotion
-    Behavior on minimapProgress { NumberAnimation { duration: root.animationsEnabled ? root.preferences.minimap.fadeMs : 0 } }
-    readonly property int overviewDuration: overviewAnimations ? preferences.overview.animationMs : 0
+    // Durations and curves for every animation live in the effects settings.
+    readonly property var fx: preferences.effects
+    function easingType(curve) { return curve === "elastic" ? Easing.OutElastic : curve === "bounce" ? Easing.OutBounce : Easing.BezierSpline }
+    function easingCurve(curve) { return Settings.bezier(curve) }
+    // Duration and curve an animation uses under the current curve mode.
+    function anim(id) { return Settings.effective(fx, id) }
+    Behavior on minimapProgress { NumberAnimation { duration: root.animationsEnabled ? root.anim("fade").ms : 0; easing.type: root.easingType(root.anim("fade").curve); easing.bezierCurve: root.easingCurve(root.anim("fade").curve) } }
+    readonly property int overviewDuration: overviewAnimations ? anim("overview").ms : 0
     onAnimationsEnabledChanged: effectsTimer.restart()
+    // Hyprland's workspace slide and camera movement follow the saved durations and curves.
+    readonly property string workspaceEffect: [anim("workspace").ms, anim("workspace").curve, anim("camera").ms, anim("camera").curve].join(":")
+    onWorkspaceEffectChanged: effectsTimer.restart()
     Timer { id:effectsTimer; interval:100; onTriggered: effectsSync.running=true }
     Process {
         id:effectsSync
         command:["timeout", "--kill-after=1s", "5s", "hyprctl","eval","if __hyprworld_apply_effects then __hyprworld_apply_effects("+(root.animationsEnabled ? "true" : "false")+") end"]
     }
-    readonly property int overviewEasing: preferences.overview.easing==="linear" ? Easing.Linear : preferences.overview.easing==="in-out-cubic" ? Easing.InOutCubic : Easing.OutCubic
     property bool pending: false
-    property real overviewProgress: overview ? 1 : 0
-    Behavior on overviewProgress { NumberAnimation { duration: root.overviewDuration; easing.type: root.overviewEasing } }
-    readonly property bool transitioning: overview || overviewProgress > 0.001
+    // The transition runs on linear time; each element applies the overview
+    // curve to its own phase, so cascades and staged fades keep the curve.
+    // A four-finger swipe drives the timeline directly (swipeValue 0..1); on
+    // release it animates on from the finger position to open or closed.
+    property real swipeValue: -1
+    property bool swipeHeld: false
+    property real overviewLinear: swipeValue >= 0 ? swipeValue : (overview ? 1 : 0)
+    Behavior on overviewLinear { enabled: !root.swipeHeld; NumberAnimation { duration: root.overviewDuration } }
+    function acceptOverviewSwipe(value) {
+        if (value >= 0) { swipeHeld = true; swipeValue = value }
+        // Re-enable the animation before releasing, so the rest is animated.
+        else { swipeHeld = false; swipeValue = -1 }
+    }
+    function ease(curve, t) { return t <= 0 ? 0 : t >= 1 ? 1 : Settings.curveAt(curve, t) }
+    function overviewEase(t) { return ease(anim("overview").curve, t) }
+    readonly property real overviewProgress: overviewEase(overviewLinear)
+    readonly property bool transitioning: overview || overviewLinear > 0.001
+    readonly property real cascade: overviewAnimations ? preferences.overview.cascade : 0
+    readonly property var cascadeDelays: OverviewMotion.cascadeDelays(tiles)
+    function cascadePhase(delay) { return OverviewMotion.phase(overviewLinear, delay, cascade) }
+    // Header and arrows follow shortly after the first cards.
+    readonly property real headerIn: overviewEase(OverviewMotion.phase(overviewLinear, 0.35, overviewAnimations ? 0.3 : 0))
+    readonly property real headerShift: overviewAnimations ? 1 - headerIn : 0
     property string wallpaper: ""
     property var preferences: Settings.defaults()
     FileView {
@@ -170,8 +303,9 @@ Item {
     }
     function command(message) {
         // Always relinquish exclusive keyboard focus even when compositor IPC fails.
-        if (message === "overview-close") locallyDismissed = true
-        if (message === "overview-close" && tiles.length === 0) {
+        var closing = message === "overview-close" || message === "overview-dismiss"
+        if (closing) locallyDismissed = true
+        if (closing && tiles.length === 0) {
             Quickshell.execDetached(["timeout", "--kill-after=1s", "5s", "hyprctl","eval","if __hyprworld_set_overview then __hyprworld_set_overview(false) end"])
             refreshTimer.restart(); return
         }
@@ -220,7 +354,8 @@ Item {
     readonly property real mapScale: Math.min(preferences.minimap.width / mapBounds.w, preferences.minimap.height / mapBounds.h)
     MinimapMotion {
         id: minimapMotion
-        duration: root.animationsEnabled && !root.transitioning && root.minimap ? root.preferences.minimap.motionMs : 0
+        duration: root.animationsEnabled && !root.transitioning && root.minimap ? root.anim("minimap").ms : 0
+        easingType: root.easingType(root.anim("minimap").curve); bezierCurve: root.easingCurve(root.anim("minimap").curve)
         workspace: root.snapshot.monitor + ":" + root.snapshot.workspaceId
         targetFrame: {
             var rects={}
@@ -243,6 +378,11 @@ Item {
     Connections {
         target: Hyprland
         function onRawEvent(event) {
+            if (event.name === "custom" && event.data.startsWith("hyprworld-overview-swipe,")) {
+                var value = Number(event.data.slice("hyprworld-overview-swipe,".length))
+                if (isFinite(value)) root.acceptOverviewSwipe(value)
+                return
+            }
             if (event.name === "custom" && (event.data.startsWith("hyprworld-drag,") || event.data.startsWith("hyprworld-drag-part,"))) {
                 try {
                     var frame = PreviewStream.accept(root.dragStream, event.data, "drag")
@@ -358,7 +498,7 @@ Item {
                 property real workspaceSlide: 0
                 property real slideDirection: 1
                 property real slideDirectionY: 0
-                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.overviewAnimations ? root.preferences.overview.switchMs : 0; easing.type: root.overviewEasing; onFinished: panel.outgoing=[] }
+                NumberAnimation { id: slideAnimation; target: panel; property: "workspaceSlide"; from: 1; to: 0; duration: root.overviewAnimations ? root.anim("switch").ms : 0; easing.type: root.easingType(root.anim("switch").curve); easing.bezierCurve: root.easingCurve(root.anim("switch").curve); onFinished: panel.outgoing=[] }
                 Connections {
                     target:root
                     function onOverviewAnimationsChanged() {
@@ -369,7 +509,7 @@ Item {
                     target: root
                     function onChangingSnapshot(next) {
                         if (!root.overview || !next.overview || next.monitor!==panel.modelData.name || root.snapshot.monitor!==next.monitor || next.workspaceId===root.snapshot.workspaceId) return
-                        if (!root.overviewAnimations || root.preferences.overview.switchMs<=0) {
+                        if (!root.overviewAnimations || root.anim("switch").ms<=0) {
                             slideAnimation.stop(); panel.workspaceSlide=0; panel.outgoing=[]; return
                         }
                         var previous=[]
@@ -412,11 +552,12 @@ Item {
                 MinimapFitMotion {
                     id: fitMotion
                     targetFrame: MinimapLayout.fit(root.mapWidth, root.mapHeight, panel.width, panel.height, root.preferences.minimap, panel.focusedBox)
-                    duration: root.animationsEnabled && root.minimap && !root.transitioning && root.preferences.minimap.placementMode === "fit" ? root.preferences.minimap.motionMs : 0
+                    duration: root.animationsEnabled && root.minimap && !root.transitioning && root.preferences.minimap.placementMode === "fit" ? root.anim("minimap").ms : 0
+                    easingType: root.easingType(root.anim("minimap").curve); bezierCurve: root.easingCurve(root.anim("minimap").curve)
                 }
                 readonly property var mapFit: fitMotion.frame
                 screen: modelData
-                visible: !overlayState.screensaverActive && (!root.preferences.minimap.hideFullscreen || !overlayState.fullscreenActive || root.overview) && (root.transitioning || root.minimapProgress>0.001 || root.gesturing) && root.snapshot.monitor === modelData.name
+                visible: !overlayState.screensaverActive && (!root.preferences.minimap.hideFullscreen || !overlayState.fullscreenActive || root.overview) && (root.transitioning || root.minimapProgress>0.001 || root.gesturing || launchPlaceholder.visible) && root.snapshot.monitor === modelData.name
                 anchors { top: true; left: true; right: true; bottom: true }
                 color: "transparent"
                 exclusionMode: ExclusionMode.Ignore
@@ -434,34 +575,41 @@ Item {
                         fillMode: Image.PreserveAspectCrop
                         cache: false
                         visible: root.transitioning
-                        opacity: root.overviewProgress
+                        opacity: Math.min(1, root.overviewProgress)
+                        // Depth: the wallpaper settles from a slight zoom and blurs in.
+                        scale: root.overviewAnimations && root.preferences.overview.depthZoom ? 1 + 0.06*(1 - root.overviewProgress) : 1
+                        layer.enabled: visible && root.preferences.overview.backgroundBlur > 0 && root.preferences.effects.postProcessing
+                        layer.effect: MultiEffect {
+                            blurEnabled: true; blurMax: 64; autoPaddingEnabled: false
+                            blur: Math.min(1, root.preferences.overview.backgroundBlur / 64 * Math.max(0, Math.min(1, root.overviewProgress)))
+                        }
                     }
-                    Rectangle { anchors.fill: parent; visible: root.transitioning; color: "black"; opacity: root.preferences.overview.dim * root.overviewProgress }
+                    Rectangle { anchors.fill: parent; visible: root.transitioning; color: "black"; opacity: root.preferences.overview.dim * Math.min(1, root.overviewProgress) }
                     MouseArea { anchors.fill: parent; enabled: root.overview; onClicked: if (root.preferences.overview.emptyClickCloses) root.command("overview-close") }
                     focus: root.overview
                     Keys.onEscapePressed: root.command("overview-close")
                     Keys.onReturnPressed: root.command("overview-close")
                     Keys.onPressed: function(event) { root.navigateOverview(event) }
                     Text {
-                        visible: root.transitioning; opacity: root.overviewProgress
-                        x: 36; y: 28
+                        visible: root.transitioning; opacity: root.headerIn
+                        x: 36; y: 28 - 18*root.headerShift
                         text: root.preferences.overview.showWorkspace ? "Workspace " + (root.snapshot.workspaceId || "") + " overview" : "Overview"
                         color: Color.foreground; font.pixelSize: 25; font.bold: true
                     }
                     Text {
-                        visible: root.transitioning && root.preferences.overview.showHints; opacity: root.overviewProgress; x: 36; y: 66
+                        visible: root.transitioning && root.preferences.overview.showHints; opacity: root.headerIn; x: 36; y: 66 - 18*root.headerShift
                         text: root.tiles.length + (root.tiles.length===1 ? " window" : " windows") + "  ·  Arrows: focus  ·  Shift + arrows / drag: move & group  ·  Click / Enter / Esc: return"
                         color: Color.foreground; font.pixelSize: 13
                     }
                     Rectangle {
-                        x: 36; y: 96; width: parent.width - 72; height: 44; radius: 8
-                        visible: root.transitioning; opacity: root.overviewProgress
+                        x: 36; y: 96 - 18*root.headerShift; width: parent.width - 72; height: 44; radius: 8
+                        visible: root.transitioning; opacity: root.headerIn
                         color: Util.alpha(Color.background, 0.92)
                         border.color: searchInput.activeFocus ? Color.accent : Util.alpha(Color.foreground, 0.35)
                         Text {
                             anchors.fill: parent; anchors.leftMargin: 14; verticalAlignment: Text.AlignVCenter
                             visible: !searchInput.text
-                            text: "Search all windows — title, app, workspace, PID, tags…"
+                            text: root.preferences.overview.launchApps ? "Search windows or launch an app — title, app, workspace, PID, tags…" : "Search all windows — title, app, workspace, PID, tags…"
                             color: Util.alpha(Color.foreground, 0.55); font.pixelSize: 15
                         }
                         TextInput {
@@ -479,8 +627,12 @@ Item {
                                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                                     if (root.searchQuery.trim()) root.selectSearchResult(root.searchIndex)
                                     else root.command("overview-close")
-                                } else if (root.searchQuery.trim() && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
-                                    root.searchIndex = Math.max(0, Math.min(root.searchResults.length-1, root.searchIndex + (event.key === Qt.Key_Down ? 1 : -1)))
+                                } else if (root.searchQuery.trim() && root.resultItems.length && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+                                        && [Qt.Key_Down, Qt.Key_Up, Qt.Key_Left, Qt.Key_Right].indexOf(event.key) >= 0) {
+                                    // Results form a grid: left/right step, up/down move a row.
+                                    var step = event.key === Qt.Key_Right ? 1 : event.key === Qt.Key_Left ? -1
+                                        : (event.key === Qt.Key_Down ? 1 : -1) * results.columns
+                                    root.searchIndex = Math.max(0, Math.min(root.resultItems.length-1, root.searchIndex + step))
                                 } else {
                                     if ((!root.searchQuery.trim() || (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) && root.navigateOverview(event)) return
                                     event.accepted = false; return
@@ -489,32 +641,163 @@ Item {
                             }
                         }
                     }
-                    ListView {
+                    GridView {
                         id: results
                         x: 36; y: 164; width: parent.width-72; height: parent.height-y-36
                         visible: root.overview && !!root.searchQuery.trim()
-                        clip: true; spacing: 8; model: root.searchResults; currentIndex: root.searchIndex
-                        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
-                        delegate: Rectangle {
+                        clip: true; model: root.resultItems; currentIndex: root.searchIndex
+                        readonly property real gap: Math.max(8, root.preferences.overview.gap*2)
+                        readonly property int columns: Math.max(1, Math.floor(width / (Math.min(width, root.preferences.overview.cardWidth) + gap)))
+                        cellWidth: Math.floor(width / columns)
+                        cellHeight: root.preferences.overview.cardHeight + gap
+                        highlightFollowsCurrentItem: false
+                        // Result cards grow in and glide when the results reflow.
+                        readonly property int moveMs: root.animationsEnabled ? root.anim("tiles").ms : 0
+                        readonly property string moveCurve: root.anim("tiles").curve
+                        populate: Transition {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: results.moveMs; easing.type: root.easingType(results.moveCurve); easing.bezierCurve: root.easingCurve(results.moveCurve) }
+                            NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: results.moveMs; easing.type: root.easingType(results.moveCurve); easing.bezierCurve: root.easingCurve(results.moveCurve) }
+                        }
+                        add: Transition {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: results.moveMs; easing.type: root.easingType(results.moveCurve); easing.bezierCurve: root.easingCurve(results.moveCurve) }
+                            NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: results.moveMs; easing.type: root.easingType(results.moveCurve); easing.bezierCurve: root.easingCurve(results.moveCurve) }
+                        }
+                        displaced: Transition {
+                            NumberAnimation { properties: "x,y"; duration: results.moveMs; easing.type: root.easingType(results.moveCurve); easing.bezierCurve: root.easingCurve(results.moveCurve) }
+                        }
+                        onCurrentIndexChanged: positionViewAtIndex(currentIndex, GridView.Contain)
+                        delegate: Item {
+                            id: result
                             required property var modelData
                             required property int index
-                            width: results.width; height: 72; radius: 8
-                            color: Util.alpha(index === root.searchIndex ? Color.accent : Color.background, 0.85)
-                            Text {
-                                x: 16; y: 12; width: parent.width-32
-                                text: modelData.title || modelData.class || "Untitled window"
-                                textFormat: Text.PlainText; elide: Text.ElideRight
-                                color: Color.foreground; font.pixelSize: 16
+                            readonly property bool isApp: modelData.kind === "app"
+                            readonly property var entry: isApp ? modelData.app : modelData.window
+                            readonly property bool selected: index === root.searchIndex
+                            readonly property var application: isApp ? {name: entry.name, icon: entry.icon} : root.app(entry)
+                            readonly property var details: !isApp && root.preferences.overview.showDetails ? Search.details(entry) : []
+                            width: results.cellWidth; height: results.cellHeight
+                            Rectangle {
+                                anchors.fill: parent; anchors.margins: results.gap/2
+                                radius: root.preferences.overview.radius; clip: true
+                                color: Util.alpha(root.preferences.overview.backgroundColor || Color.background, root.preferences.overview.cardOpacity)
+                                border.color: result.selected ? root.preferences.overview.activeColor || Color.accent : Util.alpha(Color.foreground, result.isApp ? 0.22 : 0.38)
+                                border.width: result.selected ? 2 : 1
+                                Image {
+                                    id: resultIcon
+                                    visible: root.preferences.overview.showIcons
+                                    x: 12; y: 10; width: 28; height: 28
+                                    source: Quickshell.iconPath(result.application.icon, true) || Quickshell.iconPath("application-x-executable", true)
+                                    fillMode: Image.PreserveAspectFit
+                                }
+                                Text {
+                                    x: resultIcon.visible ? 48 : 12; y: 10; height: 28; width: parent.width-x-badge.width-20
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: result.application.name || result.entry.class || "Application"
+                                    color: Color.foreground; font.pixelSize: 14; font.bold: true
+                                    elide: Text.ElideRight; textFormat: Text.PlainText
+                                }
+                                Rectangle {
+                                    id: badge
+                                    anchors.right: parent.right; anchors.rightMargin: 10; y: 14
+                                    width: badgeText.implicitWidth+12; height: 20; radius: 10
+                                    color: Util.alpha(result.isApp ? Color.accent : Color.foreground, result.isApp ? 0.28 : 0.12)
+                                    Text {
+                                        id: badgeText; anchors.centerIn: parent
+                                        text: result.isApp ? "Launch" : "WS " + ((result.entry.workspace || {}).name || (result.entry.workspace || {}).id || "?")
+                                        color: Color.foreground; font.pixelSize: 11; textFormat: Text.PlainText
+                                    }
+                                }
+                                Text {
+                                    x: 12; y: 48; width: parent.width-24
+                                    height: Math.max(0, parent.height - y - (detailsText.visible ? 30 : 10))
+                                    text: result.isApp ? (result.entry.genericName || "Open a new window on this workspace")
+                                        : String(result.entry.title || "Untitled window").replace(/[\r\n]+/g, " ")
+                                    color: Util.alpha(Color.foreground, 0.72); font.pixelSize: root.preferences.overview.fontSize
+                                    wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; textFormat: Text.PlainText
+                                }
+                                Text {
+                                    id: detailsText
+                                    visible: result.details.length > 0
+                                    x: 12; width: parent.width-24; anchors.bottom: parent.bottom; anchors.bottomMargin: 10
+                                    text: result.details.join("  ·  ")
+                                    color: Util.alpha(Color.foreground, 0.5); font.pixelSize: 11
+                                    elide: Text.ElideRight; textFormat: Text.PlainText
+                                }
                             }
-                            Text {
-                                x: 16; y: 40; width: parent.width-32
-                                text: (modelData.application || modelData.class || "Application") + " · Workspace " + ((modelData.workspace || {}).name || (modelData.workspace || {}).id || "?")
-                                textFormat: Text.PlainText; elide: Text.ElideRight
-                                color: Color.foreground; font.pixelSize: 12
-                            }
-                            MouseArea { anchors.fill: parent; onClicked: root.selectSearchResult(index) }
+                            MouseArea { anchors.fill: parent; onClicked: root.selectSearchResult(result.index) }
                         }
-                        Text { visible: results.count === 0; text: "No matching windows"; color: Color.foreground; font.pixelSize: 16 }
+                        Text { visible: results.count === 0; text: root.preferences.overview.launchApps ? "No matching windows or apps" : "No matching windows"; color: Color.foreground; font.pixelSize: 16 }
+                    }
+                    Rectangle {
+                        id: launchPlaceholder
+                        // The layout's prediction of the new window's box; an empty
+                        // workspace has no layout yet, so its first window is centred.
+                        readonly property var area: root.snapshot.area || {x: root.snapshot.monitorX || 0, y: root.snapshot.monitorY || 0, w: panel.width, h: panel.height}
+                        readonly property var box: root.launchBox || {
+                            w: area.w * root.preferences.workflow.defaultWidth, h: area.h * root.preferences.workflow.defaultHeight,
+                            x: area.x + area.w * (1 - root.preferences.workflow.defaultWidth) / 2,
+                            y: area.y + area.h * (1 - root.preferences.workflow.defaultHeight) / 2}
+                        width: box.w; height: box.h
+                        x: box.x - (root.snapshot.monitorX || 0)
+                        y: box.y - (root.snapshot.monitorY || 0)
+                        opacity: root.launching && (root.launchBox || !root.tiles.length) ? 1 : 0
+                        visible: opacity > 0.01
+                        Behavior on opacity { NumberAnimation { duration: root.animationsEnabled ? 220 : 0; easing.type: Easing.OutCubic } }
+                        radius: 12
+                        color: Util.alpha(Color.background, 0.82)
+                        border.width: 2
+                        property real pulse: 0
+                        border.color: Util.alpha(Color.accent, 0.3 + 0.7*pulse)
+                        SequentialAnimation on pulse {
+                            running: launchPlaceholder.visible && root.animationsEnabled && root.anim("launch").ms > 0
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0; to: 1; duration: root.anim("launch").ms/2; easing.type: root.easingType(root.anim("launch").curve); easing.bezierCurve: root.easingCurve(root.anim("launch").curve) }
+                            NumberAnimation { from: 1; to: 0; duration: root.anim("launch").ms/2; easing.type: root.easingType(root.anim("launch").curve); easing.bezierCurve: root.easingCurve(root.anim("launch").curve) }
+                        }
+                        Rectangle {
+                            anchors.fill: parent; anchors.margins: 10; radius: parent.radius - 4
+                            color: Util.alpha(Color.accent, 0.04 + 0.08*launchPlaceholder.pulse)
+                        }
+                        Column {
+                            anchors.centerIn: parent; spacing: 14
+                            Image {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 72; height: 72; fillMode: Image.PreserveAspectFit
+                                opacity: 0.55 + 0.45*launchPlaceholder.pulse
+                                scale: 0.94 + 0.06*launchPlaceholder.pulse
+                                source: Quickshell.iconPath(root.launchInfo.icon || "", true) || Quickshell.iconPath("application-x-executable", true)
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "Opening " + (root.launchInfo.name || "app") + "…"
+                                color: Util.alpha(Color.foreground, 0.8); font.pixelSize: 15; textFormat: Text.PlainText
+                            }
+                        }
+                    }
+                    Repeater {
+                        // Mouse workspace switching; hidden while searching.
+                        model: [-1, 1]
+                        delegate: Rectangle {
+                            required property int modelData
+                            visible: root.overview && !root.searchQuery.trim() && panel.workspaceSlide === 0
+                            opacity: root.headerIn * (arrowArea.containsMouse ? 1 : 0.7)
+                            z: 10
+                            width: 44; height: 44; radius: 22
+                            x: (modelData < 0 ? 12 : parent.width - width - 12) + modelData*40*root.headerShift
+                            y: 164 + (parent.height - 164 - 36 - height) / 2
+                            color: Util.alpha(Color.background, arrowArea.containsMouse ? 0.95 : 0.75)
+                            border.width: 1; border.color: arrowArea.containsMouse ? Color.accent : Util.alpha(Color.foreground, 0.35)
+                            Text {
+                                anchors.centerIn: parent; anchors.horizontalCenterOffset: modelData < 0 ? -1 : 1
+                                text: modelData < 0 ? "‹" : "›"; color: Color.foreground; font.pixelSize: 28
+                            }
+                            MouseArea {
+                                id: arrowArea
+                                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: root.switchWorkspace(parent.modelData)
+                            }
+                            Accessible.name: modelData < 0 ? "Previous workspace" : "Next workspace"
+                        }
                     }
                     Item {
                         id: canvas
@@ -546,6 +829,62 @@ Item {
                                 w: Math.max(2, cellW*p.w-root.preferences.overview.gap), h: Math.max(2, cellH*p.h-root.preferences.overview.gap)}
                         }
                         MinimapSurface { anchors.fill: parent; visible: !root.transitioning; preferences: root.preferences.minimap; effects:root.preferences.effects; wallpaper: root.wallpaper }
+                        GlassBackdrop {
+                            anchors.fill: parent
+                            visible: !root.transitioning && root.minimap && root.preferences.minimap.style === "glass"
+                                && root.preferences.effects.postProcessing && GraphicsInfo.api !== GraphicsInfo.Software
+                            wallpaper: root.wallpaper
+                            screenRect: ({x: canvas.x, y: canvas.y, w: canvas.width, h: canvas.height})
+                            screenSize: Qt.size(panel.width, panel.height)
+                            radius: root.preferences.minimap.glassBlur
+                            cardRadius: root.preferences.minimap.radius
+                            // Cards match the tile rectangles drawn below.
+                            cards: {
+                                var scale = panel.mapFit.scale, result = []
+                                root.tiles.forEach(function(t) {
+                                    var r = minimapMotion.frame.tiles[t.address]
+                                    if (!r) return
+                                    var x = Math.min(root.mapWidth, Math.max(0, r.x)) * scale
+                                    var y = Math.min(root.mapHeight, Math.max(0, r.y)) * scale
+                                    result.push({x: x, y: y, w: Math.max(0, Math.min(r.w*scale, panel.mapFit.w-x)),
+                                        h: Math.max(0, Math.min(r.h*scale, panel.mapFit.h-y))})
+                                })
+                                return result
+                            }
+                            // Only windows that actually sit behind the minimap are captured.
+                            windows: {
+                                if (!visible) return []
+                                var mx = root.snapshot.monitorX || 0, my = root.snapshot.monitorY || 0, result = []
+                                root.tiles.forEach(function(t) {
+                                    var b = t.box
+                                    if (!b) return
+                                    var x = b.x - mx, y = b.y - my
+                                    if (x < canvas.x + canvas.width && x + b.w > canvas.x && y < canvas.y + canvas.height && y + b.h > canvas.y)
+                                        result.push({address: t.address, x: x, y: y, w: b.w, h: b.h})
+                                })
+                                return result
+                            }
+                        }
+                        MinimapConstellation {
+                            anchors.fill: parent; anchors.margins: -12
+                            visible: !root.transitioning && root.preferences.minimap.style === "constellation"
+                            function centres(frame, scale) {
+                                var result = {}
+                                root.tiles.forEach(function(t) {
+                                    var r = frame.tiles[t.address]
+                                    if (r) result[t.address] = {x: (r.x + r.w/2)*scale + 12, y: (r.y + r.h/2)*scale + 12}
+                                })
+                                return result
+                            }
+                            stars: visible ? centres(minimapMotion.frame, panel.mapFit.scale) : ({})
+                            layoutStars: visible ? centres(minimapMotion.targetFrame, 1) : ({})
+                            active: (root.tiles.find(function(t) { return t.active }) || {}).address || ""
+                            travelMs: root.animationsEnabled ? root.anim("constellation").ms : 0
+                            easingType: root.easingType(root.anim("constellation").curve); bezierCurve: root.easingCurve(root.anim("constellation").curve)
+                            fadeMs: root.animationsEnabled ? root.anim("highlight").ms : 0
+                            fadeEasingType: root.easingType(root.anim("highlight").curve); fadeBezierCurve: root.easingCurve(root.anim("highlight").curve)
+                            glow: root.preferences.minimap.activeColor || Color.accent
+                        }
                         Text { visible: !root.transitioning && root.preferences.minimap.showWorkspace; y:-20; width:parent.width; elide:Text.ElideRight; text:"Workspace "+root.snapshot.workspaceId;color:Color.foreground;font.pixelSize:11 }
                         Repeater {
                             id: currentTiles
@@ -556,11 +895,13 @@ Item {
                                 readonly property var modelData: tileData
                                 property bool ready: false
                                 Component.onCompleted: ready=true
-                                readonly property bool animateGeometry: root.overviewAnimations && ready && root.overview && root.overviewProgress>0.999 && panel.workspaceSlide===0 && !dragArea.panning
-                                Behavior on x { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
-                                Behavior on width { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
-                                Behavior on height { enabled: tile.animateGeometry; NumberAnimation { duration: root.compactAnimating ? 300 : 180; easing.type: Easing.OutCubic } }
+                                readonly property int moveMs: root.compactAnimating ? root.anim("compact").ms : root.anim("tiles").ms
+                                readonly property string moveCurve: root.compactAnimating ? root.anim("compact").curve : root.anim("tiles").curve
+                                readonly property bool animateGeometry: root.overviewAnimations && ready && root.overview && root.overviewLinear>0.999 && panel.workspaceSlide===0 && !dragArea.panning
+                                Behavior on x { enabled: tile.animateGeometry; NumberAnimation { duration: tile.moveMs; easing.type: root.easingType(tile.moveCurve); easing.bezierCurve: root.easingCurve(tile.moveCurve) } }
+                                Behavior on y { enabled: tile.animateGeometry; NumberAnimation { duration: tile.moveMs; easing.type: root.easingType(tile.moveCurve); easing.bezierCurve: root.easingCurve(tile.moveCurve) } }
+                                Behavior on width { enabled: tile.animateGeometry; NumberAnimation { duration: tile.moveMs; easing.type: root.easingType(tile.moveCurve); easing.bezierCurve: root.easingCurve(tile.moveCurve) } }
+                                Behavior on height { enabled: tile.animateGeometry; NumberAnimation { duration: tile.moveMs; easing.type: root.easingType(tile.moveCurve); easing.bezierCurve: root.easingCurve(tile.moveCurve) } }
                                 readonly property var application: root.app(modelData)
                                 readonly property var target: canvas.cardRect(modelData)
                                 readonly property real targetX: target.x
@@ -575,38 +916,88 @@ Item {
                                 readonly property real miniW: Math.max(0,Math.min(miniRect.w*panel.mapFit.scale,panel.mapFit.w-miniX))
                                 readonly property real miniH: Math.max(0,Math.min(miniRect.h*panel.mapFit.scale,panel.mapFit.h-miniY))
                                 readonly property var area: root.snapshot.area || {x:0,y:0,w:panel.width,h:panel.height}
-                                readonly property real progress: root.transitioning ? root.overviewProgress : 1
+                                // Cascade: nearer cards lead on open and trail on close.
+                                readonly property real phase: root.transitioning ? root.cascadePhase(root.cascadeDelays[modelData.address] || 0) : 1
+                                readonly property real progress: root.transitioning ? root.overviewEase(phase) : 1
+                                // Labels fade in as the card lands.
+                                readonly property real labelsIn: root.transitioning ? root.overviewEase(Math.max(0, phase*2 - 1)) : 1
                                 x: root.transitioning ? (box.x-(root.snapshot.monitorX || 0)-canvas.x)*(1-progress)+targetX*progress : miniX
                                 y: root.transitioning ? (box.y-(root.snapshot.monitorY || 0)-canvas.y)*(1-progress)+targetY*progress : miniY
                                 width: root.transitioning ? box.w*(1-progress)+targetW*progress : miniW
                                 height: root.transitioning ? box.h*(1-progress)+targetH*progress : miniH
-                                opacity: root.transitioning ? Math.min(1, root.overviewProgress*4) : root.preferences.minimap.opacity
+                                // Minimap style; the overview always draws plain cards.
+                                readonly property string miniStyle: root.transitioning ? "" : root.preferences.minimap.style
+                                opacity: root.transitioning ? Math.min(1, Math.max(0, progress)*4)
+                                    : miniStyle === "constellation" ? 0 : miniStyle === "base" ? root.preferences.minimap.opacity : 1
                                 radius: root.transitioning ? root.preferences.overview.radius : root.preferences.minimap.radius
-                                color: root.transitioning ? Util.alpha(root.preferences.overview.backgroundColor || Color.background, root.preferences.overview.cardOpacity) : Util.alpha(root.preferences.minimap.backgroundColor || Color.background,root.preferences.minimap.fillOpacity)
-                                border.color: modelData.active ? (root.transitioning ? root.preferences.overview.activeColor : root.preferences.minimap.activeColor) || Color.accent : root.preferences.minimap.borderColor || Util.alpha(Color.foreground, 0.38)
-                                Behavior on border.color { enabled: canvas.animateMinimap; ColorAnimation { duration: 140 } }
-                                border.width: (root.transitioning ? 1 : root.preferences.minimap.lineWidth) + (modelData.active ? 1 : 0)
-                                clip: true
+                                // Glass cards tint the blurred backdrop drawn by GlassBackdrop.
+                                color: root.transitioning ? Util.alpha(root.preferences.overview.backgroundColor || Color.background, root.preferences.overview.cardOpacity)
+                                    : miniStyle === "glass" ? Util.alpha(root.preferences.minimap.backgroundColor || Color.background, Math.max(0.18, root.preferences.minimap.fillOpacity))
+                                    : miniStyle === "icons" ? "transparent"
+                                    : Util.alpha(root.preferences.minimap.backgroundColor || Color.background,root.preferences.minimap.fillOpacity)
+                                border.color: modelData.active ? (root.transitioning ? root.preferences.overview.activeColor : root.preferences.minimap.activeColor) || Color.accent
+                                    : miniStyle === "glass" ? Util.alpha(Color.foreground, 0.28) : root.preferences.minimap.borderColor || Util.alpha(Color.foreground, 0.38)
+                                Behavior on border.color { enabled: canvas.animateMinimap; ColorAnimation { duration: root.anim("highlight").ms; easing.type: root.easingType(root.anim("highlight").curve); easing.bezierCurve: root.easingCurve(root.anim("highlight").curve) } }
+                                border.width: miniStyle === "icons" ? 0 : (root.transitioning || miniStyle === "glass" ? 1 : root.preferences.minimap.lineWidth) + (modelData.active ? 1 : 0)
+                                // The arrival ring draws outside the card while it pulses.
+                                clip: !focusRing.visible
                                 MouseArea {
                                     anchors.fill: parent; enabled: !root.transitioning && root.preferences.minimap.interactive
                                     onClicked: if (/^0x[0-9a-f]+$/i.test(tile.modelData.address)) Hyprland.dispatch('hl.dsp.focus({window="address:'+tile.modelData.address+'"})')
                                 }
                                 Image {
                                     id: icon
-                                    visible: root.transitioning ? root.preferences.overview.showIcons : root.preferences.minimap.showIcons; opacity: root.transitioning ? root.overviewProgress : 1
-                                    x: 12; y: 8; width: Math.min(28, tile.height*.2); height: width
+                                    readonly property bool large: tile.miniStyle === "icons"
+                                    visible: root.transitioning ? root.preferences.overview.showIcons : large || root.preferences.minimap.showIcons
+                                    opacity: root.transitioning ? tile.labelsIn : large && !tile.modelData.active ? 0.5 : 1
+                                    width: large ? Math.max(6, Math.min(tile.width, tile.height)*0.78) : Math.min(28, tile.height*.2); height: width
+                                    x: large ? (tile.width-width)/2 : 12; y: large ? (tile.height-height)/2 : 8
                                     source: Quickshell.iconPath(tile.application.icon, true) || Quickshell.iconPath("application-x-executable", true)
                                     fillMode: Image.PreserveAspectFit
                                 }
+                                Rectangle {
+                                    // A ring pulses once around the selected card as it lands.
+                                    id: focusRing
+                                    property real pulse: 0
+                                    readonly property bool arrived: root.overview && tile.modelData.active && tile.phase >= 1
+                                    onArrivedChanged: if (arrived && root.overviewAnimations && root.preferences.overview.focusPulse) ringAnimation.restart()
+                                    visible: pulse > 0 && pulse < 1 && root.transitioning
+                                    anchors.fill: parent; anchors.margins: -2 - 12*pulse
+                                    radius: tile.radius + 2 + 12*pulse; color: "transparent"
+                                    border.width: 2; border.color: root.preferences.overview.activeColor || Color.accent
+                                    opacity: 0.85*(1 - pulse)
+                                    NumberAnimation {
+                                        id: ringAnimation
+                                        target: focusRing; property: "pulse"; from: 0; to: 1
+                                        duration: Math.max(240, root.overviewDuration*1.5)
+                                        easing.type: root.easingType(root.anim("overview").curve); easing.bezierCurve: root.easingCurve(root.anim("overview").curve)
+                                    }
+                                }
+                                Rectangle {
+                                    // Icons style marks the focused window under its icon.
+                                    visible: tile.miniStyle === "icons" && tile.modelData.active
+                                    width: Math.max(4, icon.width*0.4); height: 2; radius: 1
+                                    x: (tile.width-width)/2; y: Math.min(tile.height-height, icon.y+icon.height+1)
+                                    color: root.preferences.minimap.activeColor || Color.accent
+                                }
                                 Text {
-                                    visible: root.transitioning && root.preferences.overview.showAppNames; opacity: root.overviewProgress; x: 12; y: icon.y+icon.height+10; width: parent.width-24
+                                    visible: root.transitioning && root.preferences.overview.showAppNames; opacity: tile.labelsIn; x: 12; y: icon.y+icon.height+10; width: parent.width-24
                                     text: tile.application.name; color: Color.foreground; font.pixelSize: tile.height < 100 ? 11 : 15; font.bold: true
                                     elide: Text.ElideRight; textFormat: Text.PlainText
                                 }
                                 Text {
-                                    visible: root.transitioning ? root.preferences.overview.showTitles : root.preferences.minimap.showTitles && tile.width>50; opacity: root.transitioning ? root.overviewProgress : 1; x: 12; y: root.transitioning ? icon.y+icon.height+(tile.height < 100 ? 26 : 34) : tile.height/2-6; width: parent.width-24
+                                    visible: root.transitioning ? root.preferences.overview.showTitles : root.preferences.minimap.showTitles && tile.width>50 && tile.miniStyle !== "icons"; opacity: root.transitioning ? tile.labelsIn : 1; x: 12; y: root.transitioning ? icon.y+icon.height+(tile.height < 100 ? 26 : 34) : tile.height/2-6; width: parent.width-24
                                     text: String(modelData.title || "Untitled window").replace(/[\r\n]+/g, " ")
                                     color: Util.alpha(Color.foreground, 0.72); font.pixelSize: root.preferences.overview.fontSize; elide: Text.ElideRight; textFormat: Text.PlainText
+                                }
+                                Text {
+                                    readonly property var details: root.transitioning && root.preferences.overview.showDetails ? Search.details(root.ipcByAddress[tile.modelData.address]) : []
+                                    visible: details.length > 0 && tile.height >= 110
+                                    opacity: tile.labelsIn
+                                    x: 12; width: parent.width-24; anchors.bottom: parent.bottom; anchors.bottomMargin: 8
+                                    text: details.join("  ·  ")
+                                    color: Util.alpha(Color.foreground, 0.5); font.pixelSize: 11
+                                    elide: Text.ElideRight; textFormat: Text.PlainText
                                 }
                             }
                         }
